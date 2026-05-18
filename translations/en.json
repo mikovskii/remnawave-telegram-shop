@@ -85,6 +85,10 @@
     "text": "Terms Of Service",
     "emoji_id": "5886330010054168711"
   },
+  "privacy_button": {
+    "text": "Privacy Policy",
+    "emoji_id": "5886330010054168711"
+  },
   "subscription_expiring": "⚠️ <b>Subscription Alert</b> ⚠️\n\nYour subscription expires on %s\nTo continue using the service, please renew your subscription",
   "renew_subscription_button": {
     "text": "Renew Subscription",

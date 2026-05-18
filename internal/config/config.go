@@ -29,6 +29,7 @@ type config struct {
 	serverStatusURL                                           string
 	supportURL                                                string
 	tosURL                                                    string
+	privacyURL                                                string
 	isYookasaEnabled                                          bool
 	isCryptoEnabled                                           bool
 	isTelegramStarsEnabled                                    bool
@@ -188,6 +189,10 @@ func SupportURL() string {
 
 func TosURL() string {
 	return conf.tosURL
+}
+
+func PrivacyURL() string {
+	return conf.privacyURL
 }
 
 func YookasaEmail() string {
@@ -514,6 +519,7 @@ func InitConfig() {
 	conf.feedbackURL = os.Getenv("FEEDBACK_URL")
 	conf.channelURL = os.Getenv("CHANNEL_URL")
 	conf.tosURL = os.Getenv("TOS_URL")
+	conf.privacyURL = os.Getenv("PRIVACY_URL")
 
 	conf.squadUUIDs = func() map[uuid.UUID]uuid.UUID {
 		v := os.Getenv("SQUAD_UUIDS")

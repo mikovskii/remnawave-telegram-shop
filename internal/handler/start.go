@@ -179,5 +179,9 @@ func (h Handler) buildStartKeyboard(existingCustomer *database.Customer, langCod
 	if config.TosURL() != "" {
 		inlineKeyboard = append(inlineKeyboard, []models.InlineKeyboardButton{h.translation.GetButton(langCode, "tos_button").InlineURL(config.TosURL())})
 	}
+
+	if config.PrivacyURL() != "" {
+		inlineKeyboard = append(inlineKeyboard, []models.InlineKeyboardButton{h.translation.GetButton(langCode, "privacy_button").InlineURL(config.PrivacyURL())})
+	}
 	return inlineKeyboard
 }
