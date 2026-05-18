@@ -130,5 +130,10 @@
     "emoji_id": "5258165702707125574"
   },
   "tribute_cancelled": "Tribute cancelled",
-  "access_denied": "⚠️ Access denied. Please update your profile information."
+  "access_denied": "⚠️ Access denied. Please update your profile information.",
+  "info_button": {
+    "text": "Info",
+    "emoji_id": "5886330010054168711"
+  },
+  "info_text": "ℹ️ <b>Information</b>\n\nHere you can find our Terms of Service and Privacy Policy"
 }

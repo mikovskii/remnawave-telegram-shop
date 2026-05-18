@@ -176,12 +176,38 @@ func (h Handler) buildStartKeyboard(existingCustomer *database.Customer, langCod
 		inlineKeyboard = append(inlineKeyboard, []models.InlineKeyboardButton{h.translation.GetButton(langCode, "channel_button").InlineURL(config.ChannelURL())})
 	}
 
+	if config.TosURL() != "" || config.PrivacyURL() != "" {
+		inlineKeyboard = append(inlineKeyboard, []models.InlineKeyboardButton{h.translation.GetButton(langCode, "info_button").InlineCallback(CallbackInfo)})
+	}
+	return inlineKeyboard
+}
+
+func (h Handler) InfoCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	callback := update.CallbackQuery
+	langCode := callback.From.LanguageCode
+
+	var keyboard [][]models.InlineKeyboardButton
+
 	if config.TosURL() != "" {
-		inlineKeyboard = append(inlineKeyboard, []models.InlineKeyboardButton{h.translation.GetButton(langCode, "tos_button").InlineURL(config.TosURL())})
+		keyboard = append(keyboard, []models.InlineKeyboardButton{h.translation.GetButton(langCode, "tos_button").InlineURL(config.TosURL())})
 	}
 
 	if config.PrivacyURL() != "" {
-		inlineKeyboard = append(inlineKeyboard, []models.InlineKeyboardButton{h.translation.GetButton(langCode, "privacy_button").InlineURL(config.PrivacyURL())})
+		keyboard = append(keyboard, []models.InlineKeyboardButton{h.translation.GetButton(langCode, "privacy_button").InlineURL(config.PrivacyURL())})
 	}
-	return inlineKeyboard
+
+	keyboard = append(keyboard, []models.InlineKeyboardButton{h.translation.GetButton(langCode, "back_button").InlineCallback(CallbackStart)})
+
+	_, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:    callback.Message.Message.Chat.ID,
+		MessageID: callback.Message.Message.ID,
+		ParseMode: models.ParseModeHTML,
+		ReplyMarkup: models.InlineKeyboardMarkup{
+			InlineKeyboard: keyboard,
+		},
+		Text: h.translation.GetText(langCode, "info_text"),
+	})
+	if err != nil {
+		slog.Error("Error sending info message", "error", err)
+	}
 }
