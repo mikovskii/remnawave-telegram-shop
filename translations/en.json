@@ -111,7 +111,7 @@
     "text": "Referrals",
     "emoji_id": "6032594876506312598"
   },
-  "referral_text": "🎁 <b>Referral Program</b>\n\n━━━━━━━━━━━━━━\n\n📊 <b>Stats</b>\n• Total referrals: <b>%d</b>\n• Paid referrals: <b>%d</b>\n• Earned days: <b>%d</b>\n\n🔗 <b>Your link:</b> %s",
+  "referral_text": "🎁 <b>Referral Program</b>\n\n━━━━━━━━━━━━━━\n\n📊 <b>Stats</b>\n• Total referrals: <b>%d</b>\n• Paid referrals: <b>%d</b>\n• Earned days: <b>%d</b>\n\n🔗 <b>Your link:</b>\n<pre>%s</pre>",
   "referral_bonus_granted": "You have received a referral bonus!",
   "stars_button": {
     "text": "Telegram Stars",

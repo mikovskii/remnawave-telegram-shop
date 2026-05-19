@@ -37,11 +37,13 @@ func (h Handler) ReferralCallbackHandler(ctx context.Context, b *bot.Bot, update
 		html.EscapeString(refLink),
 	)
 	callbackMessage := update.CallbackQuery.Message.Message
+	disableLinkPreview := true
 	_, err = b.EditMessageText(ctx, &bot.EditMessageTextParams{
-		ChatID:    callbackMessage.Chat.ID,
-		MessageID: callbackMessage.ID,
-		Text:      text,
-		ParseMode: models.ParseModeHTML,
+		ChatID:             callbackMessage.Chat.ID,
+		MessageID:          callbackMessage.ID,
+		Text:               text,
+		ParseMode:          models.ParseModeHTML,
+		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: &disableLinkPreview},
 		ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 			{h.translation.GetButton(langCode, "share_referral_button").InlineURL(h.buildReferralShareLink(refLink))},
 			{h.translation.GetButton(langCode, "back_button").InlineCallback(CallbackStart)},
