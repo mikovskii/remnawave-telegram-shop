@@ -167,7 +167,7 @@ func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int6
 	if err != nil {
 		return err
 	}
-	err = s.referralRepository.MarkBonusGranted(ctxReferee, referee.ID)
+	err = s.referralRepository.MarkBonusGranted(ctxReferee, referee.ID, config.GetReferralDays())
 	if err != nil {
 		return err
 	}

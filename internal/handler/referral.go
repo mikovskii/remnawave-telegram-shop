@@ -3,10 +3,12 @@ package handler
 import (
 	"context"
 	"fmt"
+	"html"
+	"log/slog"
+	"net/url"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
-	"log/slog"
 )
 
 func (h Handler) ReferralCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -20,15 +22,20 @@ func (h Handler) ReferralCallbackHandler(ctx context.Context, b *bot.Bot, update
 		return
 	}
 	langCode := update.CallbackQuery.From.LanguageCode
-	refCode := customer.TelegramID
+	refLink := h.buildReferralLink(update.CallbackQuery.Message.Message.From.Username, customer.TelegramID)
 
-	refLink := fmt.Sprintf("https://telegram.me/share/url?url=https://t.me/%s?start=ref_%d", update.CallbackQuery.Message.Message.From.Username, refCode)
-	count, err := h.referralRepository.CountByReferrer(ctx, customer.TelegramID)
+	stats, err := h.referralRepository.StatsByReferrer(ctx, customer.TelegramID)
 	if err != nil {
-		slog.Error("error counting referrals", "error", err)
+		slog.Error("error loading referral stats", "error", err)
 		return
 	}
-	text := fmt.Sprintf(h.translation.GetText(langCode, "referral_text"), count)
+	text := fmt.Sprintf(
+		h.translation.GetText(langCode, "referral_text"),
+		stats.TotalReferrals,
+		stats.PaidReferrals,
+		stats.EarnedDays,
+		html.EscapeString(refLink),
+	)
 	callbackMessage := update.CallbackQuery.Message.Message
 	_, err = b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:    callbackMessage.Chat.ID,
@@ -36,11 +43,19 @@ func (h Handler) ReferralCallbackHandler(ctx context.Context, b *bot.Bot, update
 		Text:      text,
 		ParseMode: models.ParseModeHTML,
 		ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-			{h.translation.GetButton(langCode, "share_referral_button").InlineURL(refLink)},
+			{h.translation.GetButton(langCode, "share_referral_button").InlineURL(h.buildReferralShareLink(refLink))},
 			{h.translation.GetButton(langCode, "back_button").InlineCallback(CallbackStart)},
 		}},
 	})
 	if err != nil {
 		slog.Error("Error sending referral message", "error", err)
 	}
+}
+
+func (h Handler) buildReferralLink(botUsername string, refCode int64) string {
+	return fmt.Sprintf("https://t.me/%s?start=ref_%d", botUsername, refCode)
+}
+
+func (h Handler) buildReferralShareLink(refLink string) string {
+	return fmt.Sprintf("https://telegram.me/share/url?url=%s", url.QueryEscape(refLink))
 }
