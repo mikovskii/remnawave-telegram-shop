@@ -1,64 +1,64 @@
 {
   "greeting": "👋🏻 <b>Hello</b>\nThis is a bot for connecting to <b>VPN</b>🛡\n\n<b>How to connect:</b>\n• click the <b>Connect</b> button\n• follow the short instructions",
   "buy_button": {
-    "text": "Buy",
+    "text": "💳 Buy",
     "emoji_id": "5258165702707125574"
   },
   "connect_button": {
-    "text": "Connect",
+    "text": "🔌 Connect",
     "emoji_id": "5843553939672274145"
   },
   "back_button": {
-    "text": "Back",
+    "text": "⬅️ Back",
     "emoji_id": "6039539366177541657"
   },
   "pricing_info": "Russian bank cards and cryptocurrency are accepted for payment",
   "month_1": {
-    "text": "1 month",
+    "text": "📅 1 month",
     "emoji_id": "5890937706803894250"
   },
   "month_3": {
-    "text": "3 months",
+    "text": "📅 3 months",
     "emoji_id": "5890937706803894250"
   },
   "month_6": {
-    "text": "6 months",
+    "text": "📅 6 months",
     "emoji_id": "5890937706803894250"
   },
   "month_12": {
-    "text": "12 months",
+    "text": "📅 12 months",
     "emoji_id": "5890937706803894250"
   },
   "crypto_button": {
-    "text": "Cryptocurrency",
+    "text": "₿ Cryptocurrency",
     "emoji_id": "5402186569006210455"
   },
   "card_button": {
-    "text": "Bank card",
+    "text": "💳 Bank card",
     "emoji_id": "5258165702707125574"
   },
   "platega_sbp_button": {
-    "text": "SBP",
+    "text": "⚡ SBP",
     "emoji_id": "5258165702707125574"
   },
   "platega_cards_button": {
-    "text": "Russian Card",
+    "text": "💳 Russian Card",
     "emoji_id": "5258165702707125574"
   },
   "platega_acquiring_button": {
-    "text": "Acquiring",
+    "text": "🏦 Acquiring",
     "emoji_id": "5258165702707125574"
   },
   "platega_worldwide_button": {
-    "text": "International Card",
+    "text": "🌍 International Card",
     "emoji_id": "5258165702707125574"
   },
   "platega_crypto_button": {
-    "text": "Crypto (Platega)",
+    "text": "₿ Crypto (Platega)",
     "emoji_id": "5402186569006210455"
   },
   "pay_button": {
-    "text": "Pay",
+    "text": "✅ Pay",
     "emoji_id": "5436386989857320953"
   },
   "subscription_active": "Your subscription is valid until: %s",
@@ -66,73 +66,78 @@
   "no_subscription": "You don't have an active subscription",
   "subscription_activated": "Your subscription has been activated!",
   "feedback_button": {
-    "text": "Feedback",
+    "text": "💬 Feedback",
     "emoji_id": "5379600444098093058"
   },
   "server_status_button": {
-    "text": "Server Status",
+    "text": "📡 Server Status",
     "emoji_id": "5805532930662996322"
   },
   "support_button": {
-    "text": "Support",
+    "text": "🛟 Support",
     "emoji_id": "6301027265899661025"
   },
   "channel_button": {
-    "text": "Channel",
+    "text": "📢 Channel",
     "emoji_id": "6021418126061605425"
   },
   "tos_button": {
-    "text": "Terms Of Service",
+    "text": "📄 Terms Of Service",
     "emoji_id": "5886330010054168711"
   },
   "privacy_button": {
-    "text": "Privacy Policy",
+    "text": "🔒 Privacy Policy",
     "emoji_id": "5886330010054168711"
   },
   "subscription_expiring": "⚠️ <b>Subscription Alert</b> ⚠️\n\nYour subscription expires on %s\nTo continue using the service, please renew your subscription",
   "renew_subscription_button": {
-    "text": "Renew Subscription",
+    "text": "🔄 Renew Subscription",
     "emoji_id": "5260687681733533075"
   },
   "invoice_description": "Subscription",
   "invoice_label": "Subscription",
   "invoice_title": "Subscription",
   "trial_button": {
-    "text": "Try for free",
+    "text": "🎁 Try for free",
     "emoji_id": "5089506485931606869"
   },
   "trial_activated": "Trial period activated",
   "trial_text": "Your trial version is active",
   "activate_trial_button": {
-    "text": "Activate trial version",
+    "text": "🚀 Activate trial version",
     "emoji_id": "5089506485931606869"
   },
   "referral_button": {
-    "text": "Referrals",
+    "text": "👥 Referrals",
     "emoji_id": "6032594876506312598"
   },
   "referral_text": "🎁 <b>Referral Program</b>\n\n━━━━━━━━━━━━━━\n\n📊 <b>Stats</b>\n• Total referrals: <b>%d</b>\n• Paid referrals: <b>%d</b>\n• Earned days: <b>%d</b>\n\n🔗 <b>Your link:</b>\n<pre>%s</pre>",
   "referral_bonus_granted": "You have received a referral bonus!",
   "stars_button": {
-    "text": "Telegram Stars",
+    "text": "⭐ Telegram Stars",
     "emoji_id": "5373082993207921989"
   },
   "share_referral_button": {
-    "text": "Share",
+    "text": "📤 Share",
     "emoji_id": "5429651785352501917"
   },
+  "referral_qr_button": {
+    "text": "🔳 QR code",
+    "emoji_id": "5258165702707125574"
+  },
+  "referral_qr_caption": "🔗 <b>Your referral link:</b>\n<pre>%s</pre>",
   "web_app_button_text": {
-    "text": "Connect",
+    "text": "🔌 Connect",
     "emoji_id": "5843553939672274145"
   },
   "tribute_button": {
-    "text": "Tribute",
+    "text": "💎 Tribute",
     "emoji_id": "5258165702707125574"
   },
   "tribute_cancelled": "Tribute cancelled",
   "access_denied": "⚠️ Access denied. Please update your profile information.",
   "info_button": {
-    "text": "Info",
+    "text": "ℹ️ Info",
     "emoji_id": "5886330010054168711"
   },
   "info_text": "ℹ️ <b>Information</b>\n\nHere you can find our Terms of Service and Privacy Policy"
