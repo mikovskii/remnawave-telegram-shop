@@ -46,11 +46,37 @@ func (h Handler) ReferralCallbackHandler(ctx context.Context, b *bot.Bot, update
 		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: &disableLinkPreview},
 		ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 			{h.translation.GetButton(langCode, "share_referral_button").InlineURL(h.buildReferralShareLink(refLink))},
+			{h.translation.GetButton(langCode, "referral_qr_button").InlineCallback(CallbackReferralQR)},
 			{h.translation.GetButton(langCode, "back_button").InlineCallback(CallbackStart)},
 		}},
 	})
 	if err != nil {
 		slog.Error("Error sending referral message", "error", err)
+	}
+}
+
+func (h Handler) ReferralQRCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	customer, err := h.customerRepository.FindByTelegramId(ctx, update.CallbackQuery.From.ID)
+	if err != nil {
+		slog.Error("error finding customer", "error", err)
+		return
+	}
+	if customer == nil {
+		slog.Error("customer not found", "telegramId", update.CallbackQuery.From.ID)
+		return
+	}
+
+	langCode := update.CallbackQuery.From.LanguageCode
+	refLink := h.buildReferralLink(update.CallbackQuery.Message.Message.From.Username, customer.TelegramID)
+
+	_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{
+		ChatID:    update.CallbackQuery.Message.Message.Chat.ID,
+		Photo:     &models.InputFileString{Data: h.buildReferralQRCodeURL(refLink)},
+		Caption:   fmt.Sprintf(h.translation.GetText(langCode, "referral_qr_caption"), html.EscapeString(refLink)),
+		ParseMode: models.ParseModeHTML,
+	})
+	if err != nil {
+		slog.Error("Error sending referral QR code", "error", err)
 	}
 }
 
@@ -60,4 +86,8 @@ func (h Handler) buildReferralLink(botUsername string, refCode int64) string {
 
 func (h Handler) buildReferralShareLink(refLink string) string {
 	return fmt.Sprintf("https://telegram.me/share/url?url=%s", url.QueryEscape(refLink))
+}
+
+func (h Handler) buildReferralQRCodeURL(refLink string) string {
+	return fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=%s", url.QueryEscape(refLink))
 }
