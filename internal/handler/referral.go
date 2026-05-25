@@ -9,6 +9,8 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+
+	"remnawave-tg-shop-bot/internal/database"
 )
 
 func (h Handler) ReferralCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -23,6 +25,9 @@ func (h Handler) ReferralCallbackHandler(ctx context.Context, b *bot.Bot, update
 	}
 	langCode := update.CallbackQuery.From.LanguageCode
 	refLink := h.buildReferralLink(update.CallbackQuery.Message.Message.From.Username, customer.TelegramID)
+	h.trackEvent(ctx, customer, update.CallbackQuery.From.ID, database.EventReferralOpen, map[string]interface{}{
+		"language": langCode,
+	})
 
 	stats, err := h.referralRepository.StatsByReferrer(ctx, customer.TelegramID)
 	if err != nil {
@@ -68,6 +73,9 @@ func (h Handler) ReferralQRCallbackHandler(ctx context.Context, b *bot.Bot, upda
 
 	langCode := update.CallbackQuery.From.LanguageCode
 	refLink := h.buildReferralLink(update.CallbackQuery.Message.Message.From.Username, customer.TelegramID)
+	h.trackEvent(ctx, customer, update.CallbackQuery.From.ID, database.EventReferralQR, map[string]interface{}{
+		"language": langCode,
+	})
 
 	_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{
 		ChatID:    update.CallbackQuery.Message.Message.Chat.ID,

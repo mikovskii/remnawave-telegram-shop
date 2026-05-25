@@ -28,6 +28,14 @@ func (h Handler) ConnectCommandHandler(ctx context.Context, b *bot.Bot, update *
 	}
 
 	langCode := update.Message.From.LanguageCode
+	h.trackEvent(ctx, customer, update.Message.Chat.ID, database.EventConnectOpen, map[string]interface{}{
+		"source":               "command",
+		"language":             langCode,
+		"has_active_access":    customer.ExpireAt != nil && customer.ExpireAt.After(time.Now()),
+		"has_subscription":     customer.SubscriptionLink != nil,
+		"mini_app_enabled":     config.GetMiniAppURL() != "",
+		"web_app_link_enabled": config.IsWepAppLinkEnabled(),
+	})
 
 	bd := h.translation.GetButton(langCode, "connect_button")
 	var markup [][]models.InlineKeyboardButton
@@ -72,6 +80,14 @@ func (h Handler) ConnectCallbackHandler(ctx context.Context, b *bot.Bot, update 
 	}
 
 	langCode := update.CallbackQuery.From.LanguageCode
+	h.trackEvent(ctx, customer, callback.Chat.ID, database.EventConnectOpen, map[string]interface{}{
+		"source":               "callback",
+		"language":             langCode,
+		"has_active_access":    customer.ExpireAt != nil && customer.ExpireAt.After(time.Now()),
+		"has_subscription":     customer.SubscriptionLink != nil,
+		"mini_app_enabled":     config.GetMiniAppURL() != "",
+		"web_app_link_enabled": config.IsWepAppLinkEnabled(),
+	})
 
 	cbd := h.translation.GetButton(langCode, "connect_button")
 	var markup [][]models.InlineKeyboardButton

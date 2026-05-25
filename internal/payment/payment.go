@@ -31,6 +31,8 @@ type PaymentService struct {
 	yookasaClient      *yookasa.Client
 	plategaClient      *platega.Client
 	referralRepository *database.ReferralRepository
+	botEventRepository *database.BotEventRepository
+	periodRepository   *database.SubscriptionPeriodRepository
 	cache              *cache.Cache
 	moynalogClient     *moynalog.Client
 }
@@ -45,6 +47,8 @@ func NewPaymentService(
 	yookasaClient *yookasa.Client,
 	plategaClient *platega.Client,
 	referralRepository *database.ReferralRepository,
+	botEventRepository *database.BotEventRepository,
+	periodRepository *database.SubscriptionPeriodRepository,
 	cache *cache.Cache,
 	moynalogClient *moynalog.Client,
 ) *PaymentService {
@@ -58,6 +62,8 @@ func NewPaymentService(
 		yookasaClient:      yookasaClient,
 		plategaClient:      plategaClient,
 		referralRepository: referralRepository,
+		botEventRepository: botEventRepository,
+		periodRepository:   periodRepository,
 		cache:              cache,
 		moynalogClient:     moynalogClient,
 	}
@@ -99,16 +105,33 @@ func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int6
 	if err != nil {
 		return err
 	}
+	s.trackEvent(ctx, customer, database.EventPaymentSuccess, map[string]interface{}{
+		"purchase_id":  purchase.ID,
+		"month":        purchase.Month,
+		"amount":       purchase.Amount,
+		"currency":     purchase.Currency,
+		"invoice_type": string(purchase.InvoiceType),
+		"stage":        database.LifecycleStagePaid,
+	})
 
 	customerFilesToUpdate := map[string]interface{}{
 		"subscription_link": user.SubscriptionUrl,
 		"expire_at":         user.ExpireAt,
+		"lifecycle_stage":   database.LifecycleStagePaid,
+		"lead_score":        customer.LeadScore + 100,
+	}
+	if customer.FirstPaidAt == nil {
+		customerFilesToUpdate["first_paid_at"] = time.Now()
 	}
 
 	err = s.customerRepository.UpdateFields(ctx, customer.ID, customerFilesToUpdate)
 	if err != nil {
 		return err
 	}
+	s.createSubscriptionPeriod(ctx, customer.ID, &purchase.ID, database.SubscriptionSourcePaid, purchase.Month, user.ExpireAt, &purchase.Amount, &purchase.Currency, string(purchase.InvoiceType), map[string]interface{}{
+		"purchase_id":  purchase.ID,
+		"invoice_type": string(purchase.InvoiceType),
+	})
 
 	_, err = s.telegramBot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: customer.TelegramID,
@@ -162,6 +185,7 @@ func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int6
 	refereeUserFilesToUpdate := map[string]interface{}{
 		"subscription_link": refereeUser.SubscriptionUrl,
 		"expire_at":         refereeUser.ExpireAt,
+		"lifecycle_stage":   database.LifecycleStagePaid,
 	}
 	err = s.customerRepository.UpdateFields(ctxReferee, refereeCustomer.ID, refereeUserFilesToUpdate)
 	if err != nil {
@@ -171,6 +195,10 @@ func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int6
 	if err != nil {
 		return err
 	}
+	s.createSubscriptionPeriod(ctxReferee, refereeCustomer.ID, nil, database.SubscriptionSourceReferralBonus, 0, refereeUser.ExpireAt, nil, nil, "", map[string]interface{}{
+		"referral_id": referee.ID,
+		"earned_days": config.GetReferralDays(),
+	})
 	slog.Info("Granted referral bonus", "customer_id", utils.MaskHalfInt64(refereeCustomer.ID))
 	_, err = s.telegramBot.SendMessage(ctxReferee, &bot.SendMessageParams{
 		ChatID:    refereeCustomer.TelegramID,
@@ -455,12 +483,16 @@ func (s PaymentService) ActivateTrial(ctx context.Context, telegramId int64) (st
 	customerFilesToUpdate := map[string]interface{}{
 		"subscription_link": user.SubscriptionUrl,
 		"expire_at":         user.ExpireAt,
+		"lifecycle_stage":   database.LifecycleStageTrial,
 	}
 
 	err = s.customerRepository.UpdateFields(ctx, customer.ID, customerFilesToUpdate)
 	if err != nil {
 		return "", err
 	}
+	s.createSubscriptionPeriod(ctx, customer.ID, nil, database.SubscriptionSourceTrial, 0, user.ExpireAt, nil, nil, "", map[string]interface{}{
+		"trial_days": config.TrialDays(),
+	})
 
 	return user.SubscriptionUrl, nil
 
