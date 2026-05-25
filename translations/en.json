@@ -1,8 +1,13 @@
 {
-  "greeting": "👋🏻 <b>Hello</b>\nThis is a bot for connecting to <b>VPN</b>🛡\n\n<b>How to connect:</b>\n• click the <b>Connect</b> button\n• follow the short instructions",
+  "greeting": "👋🏻 <b>Private VPN access that works on every device</b>\n\n• iPhone, Android, Windows and macOS\n• Setup takes about 1 minute\n• Free trial available before you pay\n• Stable access with support and live server status\n• Payment: %s",
+  "greeting_active": "✅ <b>Your VPN access is active</b>\n\nConnect your device, extend the subscription, or invite friends to earn extra days.",
   "buy_button": {
-    "text": "💳 Buy",
+    "text": "💳 Buy subscription",
     "emoji_id": "5258165702707125574"
+  },
+  "extend_subscription_button": {
+    "text": "🔄 Extend subscription",
+    "emoji_id": "5260687681733533075"
   },
   "connect_button": {
     "text": "🔌 Connect",
@@ -74,7 +79,7 @@
     "emoji_id": "5805532930662996322"
   },
   "support_button": {
-    "text": "🛟 Support",
+    "text": "💬 Ask support",
     "emoji_id": "6301027265899661025"
   },
   "channel_button": {
@@ -97,8 +102,14 @@
   "invoice_description": "Subscription",
   "invoice_label": "Subscription",
   "invoice_title": "Subscription",
+  "payment_method_cards": "bank cards",
+  "payment_method_sbp": "SBP",
+  "payment_method_crypto": "cryptocurrency",
+  "payment_method_stars": "Telegram Stars",
+  "payment_method_tribute": "Tribute",
+  "payment_method_default": "available payment methods",
   "trial_button": {
-    "text": "🎁 Try for free",
+    "text": "🎁 Try free",
     "emoji_id": "5089506485931606869"
   },
   "trial_activated": "Trial period activated",
@@ -108,11 +119,14 @@
     "emoji_id": "5089506485931606869"
   },
   "referral_button": {
-    "text": "👥 Referrals",
+    "text": "👥 Invite friend",
     "emoji_id": "6032594876506312598"
   },
-  "referral_text": "🎁 <b>Referral Program</b>\n\n━━━━━━━━━━━━━━\n\n📊 <b>Stats</b>\n• Total referrals: <b>%d</b>\n• Paid referrals: <b>%d</b>\n• Earned days: <b>%d</b>\n\n🔗 <b>Your link:</b>\n<pre>%s</pre>",
-  "referral_bonus_granted": "You have received a referral bonus!",
+  "referral_text": "🎁 <b>Invite a friend</b>\n\nGive a friend VPN access. When they pay, you get <b>+%d days</b>.\n\n🏁 <b>Milestone</b>\nInvite <b>%d paid friends</b> and collect about <b>1 month</b>.\n\n📊 <b>Your stats</b>\n• Friends started: <b>%d</b>\n• Friends paid: <b>%d</b>\n• Earned days: <b>%d</b>\n\n📤 <b>Ready to share</b>\n<pre>%s</pre>\n\n🔗 <b>Your link</b>\n<pre>%s</pre>",
+  "referral_share_text": "VPN access for iPhone, Android, Windows and macOS. Setup takes 1 minute, free trial available.",
+  "referral_started": "👥 <b>%s</b> started the bot from your invite.\n\nIf they pay, you get <b>+%d days</b>. Goal: <b>%d paid friends</b> ≈ 1 month.",
+  "referral_friend_fallback": "A friend",
+  "referral_bonus_granted": "🎁 Your friend paid. You received <b>+%d days</b> of VPN access.",
   "stars_button": {
     "text": "⭐ Telegram Stars",
     "emoji_id": "5373082993207921989"

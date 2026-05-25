@@ -9,6 +9,8 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+
+	"remnawave-tg-shop-bot/internal/config"
 )
 
 func (h Handler) ReferralCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -29,11 +31,16 @@ func (h Handler) ReferralCallbackHandler(ctx context.Context, b *bot.Bot, update
 		slog.Error("error loading referral stats", "error", err)
 		return
 	}
+	shareText := h.translation.GetText(langCode, "referral_share_text")
+	shareBlock := fmt.Sprintf("%s\n%s", shareText, refLink)
 	text := fmt.Sprintf(
 		h.translation.GetText(langCode, "referral_text"),
+		config.GetReferralDays(),
+		referralMilestoneFriends(),
 		stats.TotalReferrals,
 		stats.PaidReferrals,
 		stats.EarnedDays,
+		html.EscapeString(shareBlock),
 		html.EscapeString(refLink),
 	)
 	callbackMessage := update.CallbackQuery.Message.Message
@@ -45,7 +52,7 @@ func (h Handler) ReferralCallbackHandler(ctx context.Context, b *bot.Bot, update
 		ParseMode:          models.ParseModeHTML,
 		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: &disableLinkPreview},
 		ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-			{h.translation.GetButton(langCode, "share_referral_button").InlineURL(h.buildReferralShareLink(refLink))},
+			{h.translation.GetButton(langCode, "share_referral_button").InlineURL(h.buildReferralShareLink(refLink, shareText))},
 			{h.translation.GetButton(langCode, "referral_qr_button").InlineCallback(CallbackReferralQR)},
 			{h.translation.GetButton(langCode, "back_button").InlineCallback(CallbackStart)},
 		}},
@@ -84,10 +91,18 @@ func (h Handler) buildReferralLink(botUsername string, refCode int64) string {
 	return fmt.Sprintf("https://t.me/%s?start=ref_%d", botUsername, refCode)
 }
 
-func (h Handler) buildReferralShareLink(refLink string) string {
-	return fmt.Sprintf("https://telegram.me/share/url?url=%s", url.QueryEscape(refLink))
+func (h Handler) buildReferralShareLink(refLink string, shareText string) string {
+	return fmt.Sprintf("https://t.me/share/url?url=%s&text=%s", url.QueryEscape(refLink), url.QueryEscape(shareText))
 }
 
 func (h Handler) buildReferralQRCodeURL(refLink string) string {
 	return fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=%s", url.QueryEscape(refLink))
+}
+
+func referralMilestoneFriends() int {
+	referralDays := config.GetReferralDays()
+	if referralDays <= 0 {
+		return 0
+	}
+	return (config.DaysInMonth() + referralDays - 1) / referralDays
 }
