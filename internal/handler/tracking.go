@@ -11,6 +11,8 @@ import (
 	"remnawave-tg-shop-bot/utils"
 )
 
+var handlerTrackEventSem = make(chan struct{}, 100)
+
 func (h Handler) trackEvent(ctx context.Context, customer *database.Customer, telegramID int64, eventName string, metadata map[string]interface{}) {
 	if h.botEventRepository == nil {
 		return
@@ -46,15 +48,21 @@ func (h Handler) trackEvent(ctx context.Context, customer *database.Customer, te
 		Metadata:   enriched,
 	}
 
-	go func() {
-		eventCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
+	select {
+	case handlerTrackEventSem <- struct{}{}:
+		go func() {
+			defer func() { <-handlerTrackEventSem }()
+			eventCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
 
-		err := h.botEventRepository.Create(eventCtx, event)
-		if err != nil {
-			slog.Error("failed to track bot event", "event", eventName, "telegram_id", utils.MaskHalfInt64(telegramID), "error", err)
-		}
-	}()
+			err := h.botEventRepository.Create(eventCtx, event)
+			if err != nil {
+				slog.Error("failed to track bot event", "event", eventName, "telegram_id", utils.MaskHalfInt64(telegramID), "error", err)
+			}
+		}()
+	default:
+		slog.Warn("bot event tracking queue full", "event", eventName, "telegram_id", utils.MaskHalfInt64(telegramID))
+	}
 }
 
 func parseStartPayload(payload string) map[string]interface{} {
@@ -69,6 +77,19 @@ func parseStartPayload(payload string) map[string]interface{} {
 
 	parts := strings.Split(payload, "__")
 	for _, part := range parts {
+		if value, ok := strings.CutPrefix(part, "utm_source_"); ok && value != "" {
+			result["source"] = value
+			continue
+		}
+		if value, ok := strings.CutPrefix(part, "utm_medium_"); ok && value != "" {
+			result["medium"] = value
+			continue
+		}
+		if value, ok := strings.CutPrefix(part, "utm_campaign_"); ok && value != "" {
+			result["campaign"] = value
+			continue
+		}
+
 		key, value, ok := strings.Cut(part, "_")
 		if !ok || value == "" {
 			continue
@@ -82,12 +103,6 @@ func parseStartPayload(payload string) map[string]interface{} {
 			}
 		case "src":
 			result["source"] = value
-		case "utm_source":
-			result["source"] = value
-		case "utm_medium":
-			result["medium"] = value
-		case "utm_campaign":
-			result["campaign"] = value
 		case "cmp", "campaign":
 			result["campaign"] = value
 		}

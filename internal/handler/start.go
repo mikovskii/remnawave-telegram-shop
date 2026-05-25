@@ -42,8 +42,10 @@ func (h Handler) StartCommandHandler(ctx context.Context, b *bot.Bot, update *mo
 		}
 
 		if referrerId, ok := attribution["referrer_telegram_id"].(int64); ok {
-			_, err = h.customerRepository.FindByTelegramId(ctx, referrerId)
-			if err == nil {
+			referrer, err := h.customerRepository.FindByTelegramId(ctx, referrerId)
+			if err != nil {
+				slog.Error("error finding referrer", "error", err)
+			} else if referrer != nil {
 				_, err := h.referralRepository.Create(ctx, referrerId, existingCustomer.TelegramID)
 				if err != nil {
 					slog.Error("error creating referral", "error", err)

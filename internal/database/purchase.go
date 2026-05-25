@@ -224,15 +224,57 @@ func (p *PurchaseRepository) UpdateFields(ctx context.Context, id int64, updates
 	return nil
 }
 
-func (pr *PurchaseRepository) MarkAsPaid(ctx context.Context, purchaseID int64) error {
-	currentTime := time.Now()
+func (pr *PurchaseRepository) MarkAsPaid(ctx context.Context, purchaseID int64) (bool, error) {
+	query := sq.Update("purchase").
+		Set("status", PurchaseStatusPaid).
+		Set("paid_at", time.Now()).
+		Where(sq.And{
+			sq.Eq{"id": purchaseID},
+			sq.NotEq{"status": PurchaseStatusPaid},
+		}).
+		PlaceholderFormat(sq.Dollar)
 
-	updates := map[string]interface{}{
-		"status":  PurchaseStatusPaid,
-		"paid_at": currentTime,
+	sql, args, err := query.ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build mark paid query: %w", err)
 	}
 
-	return pr.UpdateFields(ctx, purchaseID, updates)
+	result, err := pr.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to mark purchase paid: %w", err)
+	}
+
+	return result.RowsAffected() > 0, nil
+}
+
+func (pr *PurchaseRepository) MarkAbandonedNotifiedIfUnset(ctx context.Context, purchaseID int64) (bool, error) {
+	return pr.markNotifiedIfUnset(ctx, purchaseID, "abandoned_notified_at")
+}
+
+func (pr *PurchaseRepository) MarkFailedNotifiedIfUnset(ctx context.Context, purchaseID int64) (bool, error) {
+	return pr.markNotifiedIfUnset(ctx, purchaseID, "failed_notified_at")
+}
+
+func (pr *PurchaseRepository) markNotifiedIfUnset(ctx context.Context, purchaseID int64, field string) (bool, error) {
+	query := sq.Update("purchase").
+		Set(field, time.Now()).
+		Where(sq.And{
+			sq.Eq{"id": purchaseID},
+			sq.Eq{field: nil},
+		}).
+		PlaceholderFormat(sq.Dollar)
+
+	sql, args, err := query.ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build notification mark query: %w", err)
+	}
+
+	result, err := pr.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to mark purchase notification: %w", err)
+	}
+
+	return result.RowsAffected() > 0, nil
 }
 
 func (pr *PurchaseRepository) FindAbandonedInvoices(ctx context.Context, olderThan time.Time) (*[]Purchase, error) {

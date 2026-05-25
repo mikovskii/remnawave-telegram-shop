@@ -10,6 +10,8 @@ import (
 	"remnawave-tg-shop-bot/utils"
 )
 
+var paymentTrackEventSem = make(chan struct{}, 100)
+
 func (s PaymentService) trackEvent(ctx context.Context, customer *database.Customer, eventName string, metadata map[string]interface{}) {
 	if s.botEventRepository == nil || customer == nil {
 		return
@@ -32,15 +34,21 @@ func (s PaymentService) trackEvent(ctx context.Context, customer *database.Custo
 		Metadata:   enriched,
 	}
 
-	go func() {
-		eventCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
+	select {
+	case paymentTrackEventSem <- struct{}{}:
+		go func() {
+			defer func() { <-paymentTrackEventSem }()
+			eventCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
 
-		err := s.botEventRepository.Create(eventCtx, event)
-		if err != nil {
-			slog.Error("failed to track bot event", "event", eventName, "telegram_id", utils.MaskHalfInt64(customer.TelegramID), "error", err)
-		}
-	}()
+			err := s.botEventRepository.Create(eventCtx, event)
+			if err != nil {
+				slog.Error("failed to track bot event", "event", eventName, "telegram_id", utils.MaskHalfInt64(customer.TelegramID), "error", err)
+			}
+		}()
+	default:
+		slog.Warn("bot event tracking queue full", "event", eventName, "telegram_id", utils.MaskHalfInt64(customer.TelegramID))
+	}
 }
 
 func enrichEventMetadata(customer *database.Customer, metadata map[string]interface{}) map[string]interface{} {

@@ -101,9 +101,13 @@ func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int6
 		return err
 	}
 
-	err = s.purchaseRepository.MarkAsPaid(ctx, purchase.ID)
+	markedPaid, err := s.purchaseRepository.MarkAsPaid(ctx, purchase.ID)
 	if err != nil {
 		return err
+	}
+	if !markedPaid {
+		slog.Info("purchase already processed", "purchase_id", utils.MaskHalfInt64(purchase.ID))
+		return nil
 	}
 	s.trackEvent(ctx, customer, database.EventPaymentSuccess, map[string]interface{}{
 		"purchase_id":  purchase.ID,
@@ -526,10 +530,13 @@ func (s PaymentService) CancelPayment(ctx context.Context, purchaseId int64) err
 		return err
 	}
 	if customer != nil && purchase.FailedNotifiedAt == nil {
-		if err := s.sendPaymentFailedNotification(ctx, customer, purchase); err != nil {
-			slog.Error("send payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
-		} else if err := s.purchaseRepository.UpdateFields(ctx, purchase.ID, map[string]interface{}{"failed_notified_at": time.Now()}); err != nil {
+		claimed, err := s.purchaseRepository.MarkFailedNotifiedIfUnset(ctx, purchase.ID)
+		if err != nil {
 			slog.Error("mark payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
+		} else if claimed {
+			if err := s.sendPaymentFailedNotification(ctx, customer, purchase); err != nil {
+				slog.Error("send payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
+			}
 		}
 	}
 

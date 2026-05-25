@@ -86,6 +86,21 @@ FROM bot_event
 GROUP BY 1;
 
 CREATE VIEW analytics_customer_summary AS
+WITH purchase_summary AS (
+    SELECT
+        customer_id,
+        COUNT(*) FILTER (WHERE status = 'paid') AS paid_purchases,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0) AS lifetime_value,
+        MAX(paid_at) AS last_paid_at
+    FROM purchase
+    GROUP BY customer_id
+), period_summary AS (
+    SELECT
+        customer_id,
+        MAX(expires_at) AS latest_subscription_expires_at
+    FROM subscription_period
+    GROUP BY customer_id
+)
 SELECT
     c.id AS customer_id,
     c.telegram_id,
@@ -99,14 +114,13 @@ SELECT
     c.referrer_telegram_id,
     c.lifecycle_stage,
     c.lead_score,
-    COUNT(p.id) FILTER (WHERE p.status = 'paid') AS paid_purchases,
-    COALESCE(SUM(p.amount) FILTER (WHERE p.status = 'paid'), 0) AS lifetime_value,
-    MAX(p.paid_at) AS last_paid_at,
-    MAX(sp.expires_at) AS latest_subscription_expires_at
+    COALESCE(ps.paid_purchases, 0) AS paid_purchases,
+    COALESCE(ps.lifetime_value, 0) AS lifetime_value,
+    ps.last_paid_at,
+    per.latest_subscription_expires_at
 FROM customer c
-LEFT JOIN purchase p ON p.customer_id = c.id
-LEFT JOIN subscription_period sp ON sp.customer_id = c.id
-GROUP BY c.id;
+LEFT JOIN purchase_summary ps ON ps.customer_id = c.id
+LEFT JOIN period_summary per ON per.customer_id = c.id;
 
 CREATE VIEW analytics_monthly_revenue AS
 SELECT

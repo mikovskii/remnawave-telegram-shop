@@ -15,6 +15,8 @@ import (
 
 type invoicePurchaseRepository interface {
 	FindAbandonedInvoices(ctx context.Context, olderThan time.Time) (*[]database.Purchase, error)
+	MarkAbandonedNotifiedIfUnset(ctx context.Context, purchaseID int64) (bool, error)
+	MarkFailedNotifiedIfUnset(ctx context.Context, purchaseID int64) (bool, error)
 	UpdateFields(ctx context.Context, id int64, updates map[string]interface{}) error
 }
 
@@ -55,12 +57,17 @@ func (s *InvoiceService) ProcessAbandonedInvoices() error {
 		if customer == nil {
 			continue
 		}
+		claimed, err := s.purchaseRepository.MarkAbandonedNotifiedIfUnset(ctx, purchase.ID)
+		if err != nil {
+			slog.Error("failed to mark abandoned invoice notification", "purchase_id", purchase.ID, "error", err)
+			continue
+		}
+		if !claimed {
+			continue
+		}
 		if err := s.sendInvoiceAbandoned(ctx, *customer, purchase); err != nil {
 			slog.Error("failed to send abandoned invoice notification", "purchase_id", purchase.ID, "error", err)
 			continue
-		}
-		if err := s.purchaseRepository.UpdateFields(ctx, purchase.ID, map[string]interface{}{"abandoned_notified_at": time.Now()}); err != nil {
-			slog.Error("failed to mark abandoned invoice notification", "purchase_id", purchase.ID, "error", err)
 		}
 	}
 
@@ -79,10 +86,11 @@ func (s *InvoiceService) NotifyPaymentFailed(ctx context.Context, purchaseID int
 	if err != nil || customer == nil {
 		return err
 	}
-	if err := s.sendPaymentFailed(ctx, *customer, *purchase); err != nil {
+	claimed, err := s.purchaseRepository.MarkFailedNotifiedIfUnset(ctx, purchase.ID)
+	if err != nil || !claimed {
 		return err
 	}
-	return s.purchaseRepository.UpdateFields(ctx, purchase.ID, map[string]interface{}{"failed_notified_at": time.Now()})
+	return s.sendPaymentFailed(ctx, *customer, *purchase)
 }
 
 func (s *InvoiceService) loadPurchaseCustomer(ctx context.Context, purchaseID int64) (*database.Purchase, bool, error) {
