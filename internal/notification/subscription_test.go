@@ -68,7 +68,7 @@ func TestSubscriptionService_ProcessSubscriptionExpiration_ProcessesTribute(t *t
 	pRepo := &purchaseRepoMock{tributes: &tributes}
 	payMock := &paymentServiceMock{purchaseIDToReturn: 77}
 
-	svc := NewSubscriptionService(cRepo, pRepo, payMock, nil, nil)
+	svc := NewSubscriptionService(cRepo, pRepo, payMock, nil, nil, nil)
 	svc.notify = func(ctx context.Context, customer database.Customer) error {
 		t.Fatalf("sendNotification should not be called in successful tribute processing scenario")
 		return nil
@@ -107,7 +107,7 @@ func TestSubscriptionService_ProcessSubscriptionExpiration_SkipsAutoRenewWhenNot
 	pRepo := &purchaseRepoMock{tributes: &tributes}
 	payMock := &paymentServiceMock{purchaseIDToReturn: 101}
 
-	svc := NewSubscriptionService(cRepo, pRepo, payMock, nil, nil)
+	svc := NewSubscriptionService(cRepo, pRepo, payMock, nil, nil, nil)
 	svc.notify = func(ctx context.Context, customer database.Customer) error {
 		t.Fatalf("sendNotification should not be called when auto-renew is skipped due to days remaining")
 		return nil
@@ -138,7 +138,7 @@ func TestSubscriptionService_ProcessSubscriptionExpiration_SkipsAutoRenewWhenLas
 	payMock := &paymentServiceMock{}
 	notifyCalls := 0
 
-	svc := NewSubscriptionService(cRepo, pRepo, payMock, nil, nil)
+	svc := NewSubscriptionService(cRepo, pRepo, payMock, nil, nil, nil)
 	svc.notify = func(ctx context.Context, customer database.Customer) error {
 		notifyCalls++
 		return nil

@@ -15,15 +15,15 @@ import (
 type InvoiceType string
 
 const (
-	InvoiceTypeCrypto             InvoiceType = "crypto"
-	InvoiceTypeYookasa            InvoiceType = "yookasa"
-	InvoiceTypeTelegram           InvoiceType = "telegram"
-	InvoiceTypeTribute            InvoiceType = "tribute"
-	InvoiceTypePlategaSBP         InvoiceType = "plt_sbp"
-	InvoiceTypePlategaCards       InvoiceType = "plt_cards"
-	InvoiceTypePlategaAcquiring   InvoiceType = "plt_acq"
-	InvoiceTypePlategaWorldwide   InvoiceType = "plt_ww"
-	InvoiceTypePlategaCrypto      InvoiceType = "plt_crypto"
+	InvoiceTypeCrypto           InvoiceType = "crypto"
+	InvoiceTypeYookasa          InvoiceType = "yookasa"
+	InvoiceTypeTelegram         InvoiceType = "telegram"
+	InvoiceTypeTribute          InvoiceType = "tribute"
+	InvoiceTypePlategaSBP       InvoiceType = "plt_sbp"
+	InvoiceTypePlategaCards     InvoiceType = "plt_cards"
+	InvoiceTypePlategaAcquiring InvoiceType = "plt_acq"
+	InvoiceTypePlategaWorldwide InvoiceType = "plt_ww"
+	InvoiceTypePlategaCrypto    InvoiceType = "plt_crypto"
 )
 
 type PurchaseStatus string
@@ -36,22 +36,70 @@ const (
 )
 
 type Purchase struct {
-	ID                int64          `db:"id"`
-	Amount            float64        `db:"amount"`
-	CustomerID        int64          `db:"customer_id"`
-	CreatedAt         time.Time      `db:"created_at"`
-	Month             int            `db:"month"`
-	PaidAt            *time.Time     `db:"paid_at"`
-	Currency          string         `db:"currency"`
-	ExpireAt          *time.Time     `db:"expire_at"`
-	Status            PurchaseStatus `db:"status"`
-	InvoiceType       InvoiceType    `db:"invoice_type"`
-	CryptoInvoiceID   *int64         `db:"crypto_invoice_id"`
-	CryptoInvoiceLink *string        `db:"crypto_invoice_url"`
-	YookasaURL        *string        `db:"yookasa_url"`
-	YookasaID         *uuid.UUID     `db:"yookasa_id"`
-	PlategaID         *string        `db:"platega_id"`
-	PlategaURL        *string        `db:"platega_url"`
+	ID                  int64          `db:"id"`
+	Amount              float64        `db:"amount"`
+	CustomerID          int64          `db:"customer_id"`
+	CreatedAt           time.Time      `db:"created_at"`
+	Month               int            `db:"month"`
+	PaidAt              *time.Time     `db:"paid_at"`
+	Currency            string         `db:"currency"`
+	ExpireAt            *time.Time     `db:"expire_at"`
+	Status              PurchaseStatus `db:"status"`
+	InvoiceType         InvoiceType    `db:"invoice_type"`
+	CryptoInvoiceID     *int64         `db:"crypto_invoice_id"`
+	CryptoInvoiceLink   *string        `db:"crypto_invoice_url"`
+	YookasaURL          *string        `db:"yookasa_url"`
+	YookasaID           *uuid.UUID     `db:"yookasa_id"`
+	PlategaID           *string        `db:"platega_id"`
+	PlategaURL          *string        `db:"platega_url"`
+	AbandonedNotifiedAt *time.Time     `db:"abandoned_notified_at"`
+	FailedNotifiedAt    *time.Time     `db:"failed_notified_at"`
+}
+
+var purchaseColumns = []string{
+	"id",
+	"amount",
+	"customer_id",
+	"created_at",
+	"month",
+	"paid_at",
+	"currency",
+	"expire_at",
+	"status",
+	"invoice_type",
+	"crypto_invoice_id",
+	"crypto_invoice_url",
+	"yookasa_url",
+	"yookasa_id",
+	"platega_id",
+	"platega_url",
+	"abandoned_notified_at",
+	"failed_notified_at",
+}
+
+func scanPurchase(scanner interface {
+	Scan(dest ...interface{}) error
+}, purchase *Purchase) error {
+	return scanner.Scan(
+		&purchase.ID,
+		&purchase.Amount,
+		&purchase.CustomerID,
+		&purchase.CreatedAt,
+		&purchase.Month,
+		&purchase.PaidAt,
+		&purchase.Currency,
+		&purchase.ExpireAt,
+		&purchase.Status,
+		&purchase.InvoiceType,
+		&purchase.CryptoInvoiceID,
+		&purchase.CryptoInvoiceLink,
+		&purchase.YookasaURL,
+		&purchase.YookasaID,
+		&purchase.PlategaID,
+		&purchase.PlategaURL,
+		&purchase.AbandonedNotifiedAt,
+		&purchase.FailedNotifiedAt,
+	)
 }
 
 type PurchaseRepository struct {
@@ -86,7 +134,7 @@ func (cr *PurchaseRepository) Create(ctx context.Context, purchase *Purchase) (i
 }
 
 func (cr *PurchaseRepository) FindByInvoiceTypeAndStatus(ctx context.Context, invoiceType InvoiceType, status PurchaseStatus) (*[]Purchase, error) {
-	buildSelect := sq.Select("*").
+	buildSelect := sq.Select(purchaseColumns...).
 		From("purchase").
 		Where(sq.And{
 			sq.Eq{"invoice_type": invoiceType},
@@ -108,25 +156,7 @@ func (cr *PurchaseRepository) FindByInvoiceTypeAndStatus(ctx context.Context, in
 	purchases := []Purchase{}
 	for rows.Next() {
 		purchase := Purchase{}
-		err = rows.Scan(
-			&purchase.ID,
-			&purchase.Amount,
-			&purchase.CustomerID,
-			&purchase.CreatedAt,
-			&purchase.Month,
-			&purchase.PaidAt,
-			&purchase.Currency,
-			&purchase.ExpireAt,
-			&purchase.Status,
-			&purchase.InvoiceType,
-			&purchase.CryptoInvoiceID,
-			&purchase.CryptoInvoiceLink,
-			&purchase.YookasaURL,
-			&purchase.YookasaID,
-			&purchase.PlategaID,
-			&purchase.PlategaURL,
-		)
-		if err != nil {
+		if err = scanPurchase(rows, &purchase); err != nil {
 			return nil, fmt.Errorf("failed to scan purchase: %w", err)
 		}
 		purchases = append(purchases, purchase)
@@ -140,7 +170,7 @@ func (cr *PurchaseRepository) FindByInvoiceTypeAndStatus(ctx context.Context, in
 }
 
 func (cr *PurchaseRepository) FindById(ctx context.Context, id int64) (*Purchase, error) {
-	buildSelect := sq.Select("*").
+	buildSelect := sq.Select(purchaseColumns...).
 		From("purchase").
 		Where(sq.Eq{"id": id}).
 		PlaceholderFormat(sq.Dollar)
@@ -151,24 +181,7 @@ func (cr *PurchaseRepository) FindById(ctx context.Context, id int64) (*Purchase
 	}
 	purchase := &Purchase{}
 
-	err = cr.pool.QueryRow(ctx, sql, args...).Scan(
-		&purchase.ID,
-		&purchase.Amount,
-		&purchase.CustomerID,
-		&purchase.CreatedAt,
-		&purchase.Month,
-		&purchase.PaidAt,
-		&purchase.Currency,
-		&purchase.ExpireAt,
-		&purchase.Status,
-		&purchase.InvoiceType,
-		&purchase.CryptoInvoiceID,
-		&purchase.CryptoInvoiceLink,
-		&purchase.YookasaURL,
-		&purchase.YookasaID,
-		&purchase.PlategaID,
-		&purchase.PlategaURL,
-	)
+	err = scanPurchase(cr.pool.QueryRow(ctx, sql, args...), purchase)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -222,9 +235,47 @@ func (pr *PurchaseRepository) MarkAsPaid(ctx context.Context, purchaseID int64) 
 	return pr.UpdateFields(ctx, purchaseID, updates)
 }
 
+func (pr *PurchaseRepository) FindAbandonedInvoices(ctx context.Context, olderThan time.Time) (*[]Purchase, error) {
+	query := sq.Select(purchaseColumns...).
+		From("purchase").
+		Where(sq.And{
+			sq.Eq{"status": []PurchaseStatus{PurchaseStatusNew, PurchaseStatusPending}},
+			sq.LtOrEq{"created_at": olderThan},
+			sq.Eq{"abandoned_notified_at": nil},
+			sq.NotEq{"invoice_type": InvoiceTypeTribute},
+		}).
+		OrderBy("created_at ASC").
+		PlaceholderFormat(sq.Dollar)
+
+	sql, args, err := query.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build abandoned invoices query: %w", err)
+	}
+
+	rows, err := pr.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query abandoned invoices: %w", err)
+	}
+	defer rows.Close()
+
+	var purchases []Purchase
+	for rows.Next() {
+		var purchase Purchase
+		if err := scanPurchase(rows, &purchase); err != nil {
+			return nil, fmt.Errorf("scan abandoned invoice: %w", err)
+		}
+		purchases = append(purchases, purchase)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate abandoned invoices: %w", err)
+	}
+
+	return &purchases, nil
+}
+
 func buildLatestActiveTributesQuery(customerIDs []int64) sq.SelectBuilder {
 	return sq.
-		Select("*").
+		Select(purchaseColumns...).
 		From("purchase").
 		Where(sq.And{
 			sq.Eq{"invoice_type": InvoiceTypeTribute},
@@ -259,12 +310,7 @@ func (pr *PurchaseRepository) FindLatestActiveTributesByCustomerIDs(
 	var purchases []Purchase
 	for rows.Next() {
 		var p Purchase
-		if err := rows.Scan(
-			&p.ID, &p.Amount, &p.CustomerID, &p.CreatedAt, &p.Month,
-			&p.PaidAt, &p.Currency, &p.ExpireAt, &p.Status, &p.InvoiceType,
-			&p.CryptoInvoiceID, &p.CryptoInvoiceLink, &p.YookasaURL, &p.YookasaID,
-			&p.PlategaID, &p.PlategaURL,
-		); err != nil {
+		if err := scanPurchase(rows, &p); err != nil {
 			return nil, fmt.Errorf("scan purchase: %w", err)
 		}
 		purchases = append(purchases, p)
@@ -283,7 +329,7 @@ func (pr *PurchaseRepository) FindByCustomerIDAndInvoiceTypeLast(
 	invoiceType InvoiceType,
 ) (*Purchase, error) {
 
-	query := sq.Select("*").
+	query := sq.Select(purchaseColumns...).
 		From("purchase").
 		Where(sq.And{
 			sq.Eq{"customer_id": customerID},
@@ -299,12 +345,7 @@ func (pr *PurchaseRepository) FindByCustomerIDAndInvoiceTypeLast(
 	}
 
 	p := &Purchase{}
-	err = pr.pool.QueryRow(ctx, sql, args...).Scan(
-		&p.ID, &p.Amount, &p.CustomerID, &p.CreatedAt, &p.Month,
-		&p.PaidAt, &p.Currency, &p.ExpireAt, &p.Status, &p.InvoiceType,
-		&p.CryptoInvoiceID, &p.CryptoInvoiceLink, &p.YookasaURL, &p.YookasaID,
-		&p.PlategaID, &p.PlategaURL,
-	)
+	err = scanPurchase(pr.pool.QueryRow(ctx, sql, args...), p)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -315,9 +356,8 @@ func (pr *PurchaseRepository) FindByCustomerIDAndInvoiceTypeLast(
 	return p, nil
 }
 
-
 func (pr *PurchaseRepository) FindSuccessfulPaidPurchaseByCustomer(ctx context.Context, customerID int64) (*Purchase, error) {
-	query := sq.Select("*").
+	query := sq.Select(purchaseColumns...).
 		From("purchase").
 		Where(sq.And{
 			sq.Eq{"customer_id": customerID},
@@ -342,12 +382,7 @@ func (pr *PurchaseRepository) FindSuccessfulPaidPurchaseByCustomer(ctx context.C
 	}
 
 	p := &Purchase{}
-	err = pr.pool.QueryRow(ctx, sql, args...).Scan(
-		&p.ID, &p.Amount, &p.CustomerID, &p.CreatedAt, &p.Month,
-		&p.PaidAt, &p.Currency, &p.ExpireAt, &p.Status, &p.InvoiceType,
-		&p.CryptoInvoiceID, &p.CryptoInvoiceLink, &p.YookasaURL, &p.YookasaID,
-		&p.PlategaID, &p.PlategaURL,
-	)
+	err = scanPurchase(pr.pool.QueryRow(ctx, sql, args...), p)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil

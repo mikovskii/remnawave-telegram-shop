@@ -89,7 +89,7 @@
     "text": "🔒 Privacy Policy",
     "emoji_id": "5886330010054168711"
   },
-  "subscription_expiring": "⚠️ <b>Subscription Alert</b> ⚠️\n\nYour subscription expires on %s\nTo continue using the service, please renew your subscription",
+  "subscription_expiring": "⚠️ <b>Subscription Alert</b> ⚠️\n\nYour subscription expires on %s\nDays left: %d\n\nRenew early to keep access uninterrupted",
   "renew_subscription_button": {
     "text": "🔄 Renew Subscription",
     "emoji_id": "5260687681733533075"
@@ -97,6 +97,8 @@
   "invoice_description": "Subscription",
   "invoice_label": "Subscription",
   "invoice_title": "Subscription",
+  "invoice_abandoned": "⏳ <b>Payment not completed</b>\n\nYou selected a %d-month subscription for %.2f %s, but the payment has not gone through yet.\n\nYou can continue payment or choose another method.",
+  "payment_failed": "❌ <b>Payment failed</b>\n\nThe %d-month subscription for %.2f %s was not paid.\n\nTry paying again or choose another method.",
   "trial_button": {
     "text": "🎁 Try for free",
     "emoji_id": "5089506485931606869"

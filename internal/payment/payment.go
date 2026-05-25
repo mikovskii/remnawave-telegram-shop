@@ -499,6 +499,10 @@ func (s PaymentService) ActivateTrial(ctx context.Context, telegramId int64) (st
 }
 
 func (s PaymentService) CancelYookassaPayment(purchaseId int64) error {
+	return s.CancelPayment(context.Background(), purchaseId)
+}
+
+func (s PaymentService) CancelPayment(ctx context.Context, purchaseId int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	purchase, err := s.purchaseRepository.FindById(ctx, purchaseId)
@@ -517,8 +521,55 @@ func (s PaymentService) CancelYookassaPayment(purchaseId int64) error {
 	if err != nil {
 		return err
 	}
+	customer, err := s.customerRepository.FindById(ctx, purchase.CustomerID)
+	if err != nil {
+		return err
+	}
+	if customer != nil && purchase.FailedNotifiedAt == nil {
+		if err := s.sendPaymentFailedNotification(ctx, customer, purchase); err != nil {
+			slog.Error("send payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
+		} else if err := s.purchaseRepository.UpdateFields(ctx, purchase.ID, map[string]interface{}{"failed_notified_at": time.Now()}); err != nil {
+			slog.Error("mark payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
+		}
+	}
 
 	return nil
+}
+
+func (s PaymentService) sendPaymentFailedNotification(ctx context.Context, customer *database.Customer, purchase *database.Purchase) error {
+	if s.telegramBot == nil || s.translation == nil {
+		return nil
+	}
+	paymentURL := paymentURLForPurchase(purchase)
+	keyboard := [][]models.InlineKeyboardButton{}
+	if paymentURL != "" {
+		keyboard = append(keyboard, []models.InlineKeyboardButton{s.translation.GetButton(customer.Language, "pay_button").InlineURL(paymentURL)})
+	}
+	keyboard = append(keyboard, []models.InlineKeyboardButton{s.translation.GetButton(customer.Language, "renew_subscription_button").InlineCallback("buy")})
+
+	text := fmt.Sprintf(s.translation.GetText(customer.Language, "payment_failed"), purchase.Month, purchase.Amount, purchase.Currency)
+	_, err := s.telegramBot.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      customer.TelegramID,
+		Text:        text,
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+	})
+	return err
+}
+
+func paymentURLForPurchase(purchase *database.Purchase) string {
+	switch {
+	case purchase == nil:
+		return ""
+	case purchase.CryptoInvoiceLink != nil:
+		return *purchase.CryptoInvoiceLink
+	case purchase.YookasaURL != nil:
+		return *purchase.YookasaURL
+	case purchase.PlategaURL != nil:
+		return *purchase.PlategaURL
+	default:
+		return ""
+	}
 }
 
 func (s PaymentService) createTributeInvoice(ctx context.Context, amount float64, months int, customer *database.Customer) (url string, purchaseId int64, err error) {

@@ -15,6 +15,7 @@ import (
 
 type PurchaseProcessor interface {
 	ProcessPurchaseById(ctx context.Context, purchaseId int64) error
+	CancelPayment(ctx context.Context, purchaseId int64) error
 }
 
 type WebhookHandler struct {
@@ -110,10 +111,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case StatusCanceled, StatusChargebacked:
-		err := h.purchaseRepo.UpdateFields(ctx, purchaseID, map[string]interface{}{
-			"status": database.PurchaseStatusCancel,
-		})
-		if err != nil {
+		if err := h.processor.CancelPayment(ctx, purchaseID); err != nil {
 			slog.Error("platega webhook: cancel purchase failed", "purchase_id", purchaseID, "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return

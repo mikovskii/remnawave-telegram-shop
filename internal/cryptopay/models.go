@@ -55,6 +55,10 @@ func (r InvoiceResponse) IsPaid() bool {
 	return r.Status == "paid"
 }
 
+func (r InvoiceResponse) IsFailed() bool {
+	return r.Status == "expired"
+}
+
 type ResponseWrapper[T any] struct {
 	Ok     bool `json:"ok"`
 	Result T    `json:"result"`
