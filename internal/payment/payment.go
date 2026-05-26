@@ -208,7 +208,7 @@ func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int6
 		_, err = s.telegramBot.SendMessage(ctxReferee, &bot.SendMessageParams{
 			ChatID:    refereeCustomer.TelegramID,
 			ParseMode: models.ParseModeHTML,
-			Text:      s.translation.GetText(refereeCustomer.Language, "referral_bonus_granted"),
+			Text:      fmt.Sprintf(s.translation.GetText(refereeCustomer.Language, "referral_bonus_granted"), config.GetReferralDays()),
 			ReplyMarkup: models.InlineKeyboardMarkup{
 				InlineKeyboard: s.createConnectKeyboard(refereeCustomer),
 			},
