@@ -21,16 +21,68 @@ func NewCustomerRepository(poll *pgxpool.Pool) *CustomerRepository {
 }
 
 type Customer struct {
-	ID               int64      `db:"id"`
-	TelegramID       int64      `db:"telegram_id"`
-	ExpireAt         *time.Time `db:"expire_at"`
-	CreatedAt        time.Time  `db:"created_at"`
-	SubscriptionLink *string    `db:"subscription_link"`
-	Language         string     `db:"language"`
+	ID                 int64      `db:"id"`
+	TelegramID         int64      `db:"telegram_id"`
+	ExpireAt           *time.Time `db:"expire_at"`
+	CreatedAt          time.Time  `db:"created_at"`
+	SubscriptionLink   *string    `db:"subscription_link"`
+	Language           string     `db:"language"`
+	FirstSeenAt        *time.Time `db:"first_seen_at"`
+	LastSeenAt         *time.Time `db:"last_seen_at"`
+	FirstPaidAt        *time.Time `db:"first_paid_at"`
+	FirstStartPayload  *string    `db:"first_start_payload"`
+	Source             *string    `db:"source"`
+	Medium             *string    `db:"medium"`
+	Campaign           *string    `db:"campaign"`
+	ReferrerTelegramID *int64     `db:"referrer_telegram_id"`
+	LifecycleStage     string     `db:"lifecycle_stage"`
+	LeadScore          int        `db:"lead_score"`
+}
+
+var customerColumns = []string{
+	"id",
+	"telegram_id",
+	"expire_at",
+	"created_at",
+	"subscription_link",
+	"language",
+	"first_seen_at",
+	"last_seen_at",
+	"first_paid_at",
+	"first_start_payload",
+	"source",
+	"medium",
+	"campaign",
+	"referrer_telegram_id",
+	"lifecycle_stage",
+	"lead_score",
+}
+
+func scanCustomer(scanner interface {
+	Scan(dest ...interface{}) error
+}, customer *Customer) error {
+	return scanner.Scan(
+		&customer.ID,
+		&customer.TelegramID,
+		&customer.ExpireAt,
+		&customer.CreatedAt,
+		&customer.SubscriptionLink,
+		&customer.Language,
+		&customer.FirstSeenAt,
+		&customer.LastSeenAt,
+		&customer.FirstPaidAt,
+		&customer.FirstStartPayload,
+		&customer.Source,
+		&customer.Medium,
+		&customer.Campaign,
+		&customer.ReferrerTelegramID,
+		&customer.LifecycleStage,
+		&customer.LeadScore,
+	)
 }
 
 func (cr *CustomerRepository) FindByExpirationRange(ctx context.Context, startDate, endDate time.Time) (*[]Customer, error) {
-	buildSelect := sq.Select("id", "telegram_id", "expire_at", "created_at", "subscription_link", "language").
+	buildSelect := sq.Select(customerColumns...).
 		From("customer").
 		Where(
 			sq.And{
@@ -55,15 +107,7 @@ func (cr *CustomerRepository) FindByExpirationRange(ctx context.Context, startDa
 	var customers []Customer
 	for rows.Next() {
 		var customer Customer
-		err := rows.Scan(
-			&customer.ID,
-			&customer.TelegramID,
-			&customer.ExpireAt,
-			&customer.CreatedAt,
-			&customer.SubscriptionLink,
-			&customer.Language,
-		)
-		if err != nil {
+		if err := scanCustomer(rows, &customer); err != nil {
 			return nil, fmt.Errorf("failed to scan customer row: %w", err)
 		}
 		customers = append(customers, customer)
@@ -77,7 +121,7 @@ func (cr *CustomerRepository) FindByExpirationRange(ctx context.Context, startDa
 }
 
 func (cr *CustomerRepository) FindById(ctx context.Context, id int64) (*Customer, error) {
-	buildSelect := sq.Select("id", "telegram_id", "expire_at", "created_at", "subscription_link", "language").
+	buildSelect := sq.Select(customerColumns...).
 		From("customer").
 		Where(sq.Eq{"id": id}).
 		PlaceholderFormat(sq.Dollar)
@@ -89,14 +133,7 @@ func (cr *CustomerRepository) FindById(ctx context.Context, id int64) (*Customer
 
 	var customer Customer
 
-	err = cr.pool.QueryRow(ctx, sql, args...).Scan(
-		&customer.ID,
-		&customer.TelegramID,
-		&customer.ExpireAt,
-		&customer.CreatedAt,
-		&customer.SubscriptionLink,
-		&customer.Language,
-	)
+	err = scanCustomer(cr.pool.QueryRow(ctx, sql, args...), &customer)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -107,7 +144,7 @@ func (cr *CustomerRepository) FindById(ctx context.Context, id int64) (*Customer
 }
 
 func (cr *CustomerRepository) FindByTelegramId(ctx context.Context, telegramId int64) (*Customer, error) {
-	buildSelect := sq.Select("id", "telegram_id", "expire_at", "created_at", "subscription_link", "language").
+	buildSelect := sq.Select(customerColumns...).
 		From("customer").
 		Where(sq.Eq{"telegram_id": telegramId}).
 		PlaceholderFormat(sq.Dollar)
@@ -119,14 +156,7 @@ func (cr *CustomerRepository) FindByTelegramId(ctx context.Context, telegramId i
 
 	var customer Customer
 
-	err = cr.pool.QueryRow(ctx, sql, args...).Scan(
-		&customer.ID,
-		&customer.TelegramID,
-		&customer.ExpireAt,
-		&customer.CreatedAt,
-		&customer.SubscriptionLink,
-		&customer.Language,
-	)
+	err = scanCustomer(cr.pool.QueryRow(ctx, sql, args...), &customer)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -142,22 +172,15 @@ func (cr *CustomerRepository) Create(ctx context.Context, customer *Customer) (*
 
 func (cr *CustomerRepository) FindOrCreate(ctx context.Context, customer *Customer) (*Customer, error) {
 	query := `
-		INSERT INTO customer (telegram_id, expire_at, language)
-		VALUES ($1, $2, $3)
+		INSERT INTO customer (telegram_id, expire_at, language, first_seen_at, last_seen_at, lifecycle_stage)
+		VALUES ($1, $2, $3, NOW(), NOW(), 'new')
 		ON CONFLICT (telegram_id) DO UPDATE SET telegram_id = customer.telegram_id
-		RETURNING id, telegram_id, expire_at, created_at, subscription_link, language
+		RETURNING id, telegram_id, expire_at, created_at, subscription_link, language, first_seen_at, last_seen_at, first_paid_at, first_start_payload, source, medium, campaign, referrer_telegram_id, lifecycle_stage, lead_score
 	`
 
 	row := cr.pool.QueryRow(ctx, query, customer.TelegramID, customer.ExpireAt, customer.Language)
 	var result Customer
-	if err := row.Scan(
-		&result.ID,
-		&result.TelegramID,
-		&result.ExpireAt,
-		&result.CreatedAt,
-		&result.SubscriptionLink,
-		&result.Language,
-	); err != nil {
+	if err := scanCustomer(row, &result); err != nil {
 		return nil, fmt.Errorf("failed to find or create customer: %w", err)
 	}
 
@@ -188,7 +211,7 @@ func (cr *CustomerRepository) UpdateFields(ctx context.Context, id int64, update
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	result, err := cr.pool.Exec(ctx, sql, args...)
+	result, err := tx.Exec(ctx, sql, args...)
 	if err != nil {
 		if err := tx.Rollback(ctx); err != nil {
 			return fmt.Errorf("failed to rollback transaction: %w", err)
@@ -208,7 +231,7 @@ func (cr *CustomerRepository) UpdateFields(ctx context.Context, id int64, update
 }
 
 func (cr *CustomerRepository) FindByTelegramIds(ctx context.Context, telegramIDs []int64) ([]Customer, error) {
-	buildSelect := sq.Select("id", "telegram_id", "expire_at", "created_at", "subscription_link", "language").
+	buildSelect := sq.Select(customerColumns...).
 		From("customer").
 		Where(sq.Eq{"telegram_id": telegramIDs}).
 		PlaceholderFormat(sq.Dollar)
@@ -227,15 +250,7 @@ func (cr *CustomerRepository) FindByTelegramIds(ctx context.Context, telegramIDs
 	var customers []Customer
 	for rows.Next() {
 		var customer Customer
-		err := rows.Scan(
-			&customer.ID,
-			&customer.TelegramID,
-			&customer.ExpireAt,
-			&customer.CreatedAt,
-			&customer.SubscriptionLink,
-			&customer.Language,
-		)
-		if err != nil {
+		if err := scanCustomer(rows, &customer); err != nil {
 			return nil, fmt.Errorf("failed to scan customer row: %w", err)
 		}
 		customers = append(customers, customer)

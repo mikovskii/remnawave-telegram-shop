@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +18,12 @@ func (h Handler) StartCommandHandler(ctx context.Context, b *bot.Bot, update *mo
 	ctxWithTime, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	langCode := update.Message.From.LanguageCode
+	startPayload := ""
+	parts := strings.SplitN(update.Message.Text, " ", 2)
+	if len(parts) == 2 {
+		startPayload = strings.TrimSpace(parts[1])
+	}
+
 	existingCustomer, err := h.customerRepository.FindByTelegramId(ctx, update.Message.Chat.ID)
 	if err != nil {
 		slog.Error("error finding customer by telegram id", "error", err)
@@ -26,6 +31,7 @@ func (h Handler) StartCommandHandler(ctx context.Context, b *bot.Bot, update *mo
 	}
 
 	if existingCustomer == nil {
+		attribution := parseStartPayload(startPayload)
 		existingCustomer, err = h.customerRepository.Create(ctxWithTime, &database.Customer{
 			TelegramID: update.Message.Chat.ID,
 			Language:   langCode,
@@ -35,29 +41,59 @@ func (h Handler) StartCommandHandler(ctx context.Context, b *bot.Bot, update *mo
 			return
 		}
 
-		if strings.Contains(update.Message.Text, "ref_") {
-			arg := strings.Split(update.Message.Text, " ")[1]
-			if strings.HasPrefix(arg, "ref_") {
-				code := strings.TrimPrefix(arg, "ref_")
-				referrerId, err := strconv.ParseInt(code, 10, 64)
+		if referrerId, ok := attribution["referrer_telegram_id"].(int64); ok {
+			referrer, err := h.customerRepository.FindByTelegramId(ctx, referrerId)
+			if err != nil {
+				slog.Error("error finding referrer", "error", err)
+			} else if referrer != nil {
+				_, err := h.referralRepository.Create(ctx, referrerId, existingCustomer.TelegramID)
 				if err != nil {
-					slog.Error("error parsing referrer id", "error", err)
+					slog.Error("error creating referral", "error", err)
 					return
 				}
-				_, err = h.customerRepository.FindByTelegramId(ctx, referrerId)
-				if err == nil {
-					_, err := h.referralRepository.Create(ctx, referrerId, existingCustomer.TelegramID)
-					if err != nil {
-						slog.Error("error creating referral", "error", err)
-						return
-					}
-					slog.Info("referral created", "referrerId", utils.MaskHalfInt64(referrerId), "refereeId", utils.MaskHalfInt64(existingCustomer.TelegramID))
-				}
+				slog.Info("referral created", "referrerId", utils.MaskHalfInt64(referrerId), "refereeId", utils.MaskHalfInt64(existingCustomer.TelegramID))
 			}
 		}
+
+		updates := map[string]interface{}{
+			"first_start_payload": startPayload,
+			"last_seen_at":        time.Now(),
+			"lifecycle_stage":     database.LifecycleStageLead,
+			"lead_score":          existingCustomer.LeadScore + 1,
+		}
+		if source, ok := attribution["source"].(string); ok {
+			updates["source"] = source
+		}
+		if medium, ok := attribution["medium"].(string); ok {
+			updates["medium"] = medium
+		}
+		if campaign, ok := attribution["campaign"].(string); ok {
+			updates["campaign"] = campaign
+		}
+		if referrerTelegramID, ok := attribution["referrer_telegram_id"].(int64); ok {
+			updates["referrer_telegram_id"] = referrerTelegramID
+		}
+		if err := h.customerRepository.UpdateFields(ctx, existingCustomer.ID, updates); err != nil {
+			slog.Error("Error updating customer attribution", "error", err)
+		} else if refreshedCustomer, err := h.customerRepository.FindByTelegramId(ctx, update.Message.Chat.ID); err == nil {
+			existingCustomer = refreshedCustomer
+		}
+
+		metadata := map[string]interface{}{
+			"new_customer": true,
+			"payload":      startPayload,
+			"language":     langCode,
+			"stage":        database.LifecycleStageLead,
+		}
+		for key, value := range attribution {
+			metadata[key] = value
+		}
+		h.trackEvent(ctx, existingCustomer, update.Message.Chat.ID, database.EventStart, metadata)
 	} else {
 		updates := map[string]interface{}{
-			"language": langCode,
+			"language":     langCode,
+			"last_seen_at": time.Now(),
+			"lead_score":   existingCustomer.LeadScore + 1,
 		}
 
 		err = h.customerRepository.UpdateFields(ctx, existingCustomer.ID, updates)
@@ -65,9 +101,19 @@ func (h Handler) StartCommandHandler(ctx context.Context, b *bot.Bot, update *mo
 			slog.Error("Error updating customer", "error", err)
 			return
 		}
+		existingCustomer.LeadScore++
+		h.trackEvent(ctx, existingCustomer, update.Message.Chat.ID, database.EventStart, map[string]interface{}{
+			"new_customer": false,
+			"payload":      startPayload,
+			"language":     langCode,
+		})
 	}
 
 	inlineKeyboard := h.buildStartKeyboard(existingCustomer, langCode)
+	h.trackEvent(ctxWithTime, existingCustomer, update.Message.Chat.ID, database.EventStartMenuView, map[string]interface{}{
+		"source":   "command",
+		"language": langCode,
+	})
 
 	m, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: update.Message.Chat.ID,
@@ -119,6 +165,10 @@ func (h Handler) StartCallbackHandler(ctx context.Context, b *bot.Bot, update *m
 	}
 
 	inlineKeyboard := h.buildStartKeyboard(existingCustomer, langCode)
+	h.trackEvent(ctxWithTime, existingCustomer, callback.From.ID, database.EventStartMenuView, map[string]interface{}{
+		"source":   "callback",
+		"language": langCode,
+	})
 
 	_, err = b.EditMessageText(ctxWithTime, &bot.EditMessageTextParams{
 		ChatID:    callback.Message.Message.Chat.ID,
@@ -185,6 +235,14 @@ func (h Handler) buildStartKeyboard(existingCustomer *database.Customer, langCod
 func (h Handler) InfoCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	callback := update.CallbackQuery
 	langCode := callback.From.LanguageCode
+	customer, err := h.customerRepository.FindByTelegramId(ctx, callback.From.ID)
+	if err != nil {
+		slog.Error("error finding customer by telegram id", "error", err)
+	} else {
+		h.trackEvent(ctx, customer, callback.From.ID, database.EventInfoOpen, map[string]interface{}{
+			"language": langCode,
+		})
+	}
 
 	var keyboard [][]models.InlineKeyboardButton
 
@@ -198,7 +256,7 @@ func (h Handler) InfoCallbackHandler(ctx context.Context, b *bot.Bot, update *mo
 
 	keyboard = append(keyboard, []models.InlineKeyboardButton{h.translation.GetButton(langCode, "back_button").InlineCallback(CallbackStart)})
 
-	_, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
+	_, err = b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:    callback.Message.Message.Chat.ID,
 		MessageID: callback.Message.Message.ID,
 		ParseMode: models.ParseModeHTML,

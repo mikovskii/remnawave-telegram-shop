@@ -25,10 +25,17 @@ type paymentProcessor interface {
 	ProcessPurchaseById(ctx context.Context, purchaseId int64) error
 }
 
+type notificationLogger interface {
+	Claim(ctx context.Context, customerID int64, notificationType string, dedupeKey string, metadata map[string]interface{}) (bool, error)
+	MarkSent(ctx context.Context, customerID int64, notificationType string, dedupeKey string) error
+	MarkFailed(ctx context.Context, customerID int64, notificationType string, dedupeKey string, sendErr error) error
+}
+
 type SubscriptionService struct {
 	customerRepository customerRepository
 	purchaseRepository tributeRepository
 	paymentService     paymentProcessor
+	notificationLogger notificationLogger
 	telegramBot        *bot.Bot
 	tm                 *translation.Manager
 	notify             func(context.Context, database.Customer) error
@@ -37,9 +44,10 @@ type SubscriptionService struct {
 func NewSubscriptionService(customerRepository customerRepository,
 	purchaseRepository tributeRepository,
 	paymentService paymentProcessor,
+	notificationLogger notificationLogger,
 	telegramBot *bot.Bot,
 	tm *translation.Manager) *SubscriptionService {
-	svc := &SubscriptionService{customerRepository: customerRepository, purchaseRepository: purchaseRepository, paymentService: paymentService, telegramBot: telegramBot, tm: tm}
+	svc := &SubscriptionService{customerRepository: customerRepository, purchaseRepository: purchaseRepository, paymentService: paymentService, notificationLogger: notificationLogger, telegramBot: telegramBot, tm: tm}
 	svc.notify = svc.sendNotification
 	return svc
 }
@@ -100,6 +108,23 @@ func (s *SubscriptionService) ProcessSubscriptionExpiration() error {
 		if _, ok := tributesProcessed[customer.ID]; ok {
 			continue
 		}
+		if !shouldSendRenewalNotification(daysUntilExpiration) {
+			continue
+		}
+		dedupeKey := fmt.Sprintf("%s:%d", customer.ExpireAt.Format("2006-01-02"), daysUntilExpiration)
+		if s.notificationLogger != nil {
+			claimed, err := s.notificationLogger.Claim(ctx, customer.ID, database.NotificationRenewal, dedupeKey, map[string]interface{}{
+				"days_until_expiration": daysUntilExpiration,
+				"expire_at":             customer.ExpireAt.Format(time.RFC3339),
+			})
+			if err != nil {
+				slog.Error("Failed to claim renewal notification log", "customer_id", customer.ID, "error", err)
+				continue
+			}
+			if !claimed {
+				continue
+			}
+		}
 
 		send := s.notify
 		if send == nil {
@@ -108,11 +133,25 @@ func (s *SubscriptionService) ProcessSubscriptionExpiration() error {
 
 		err := send(ctx, customer)
 		if err != nil {
+			if s.notificationLogger != nil {
+				if markErr := s.notificationLogger.MarkFailed(ctx, customer.ID, database.NotificationRenewal, dedupeKey, err); markErr != nil {
+					slog.Error("Failed to mark renewal notification failed", "customer_id", customer.ID, "error", markErr)
+				}
+			}
 			slog.Error("Failed to send notification",
 				"customer_id", customer.ID,
 				"days_until_expiration", daysUntilExpiration,
 				"error", err)
 			continue
+		}
+		if s.notificationLogger != nil {
+			if err := s.notificationLogger.MarkSent(ctx, customer.ID, database.NotificationRenewal, dedupeKey); err != nil {
+				slog.Error("Failed to mark renewal notification sent",
+					"customer_id", customer.ID,
+					"days_until_expiration", daysUntilExpiration,
+					"error", err)
+				continue
+			}
 		}
 
 		slog.Info("Notification sent successfully",
@@ -127,9 +166,10 @@ func (s *SubscriptionService) ProcessSubscriptionExpiration() error {
 
 func (s *SubscriptionService) getCustomersWithExpiringSubscriptions() (*[]database.Customer, error) {
 	now := time.Now()
-	endDate := now.AddDate(0, 0, 3)
+	startDate := now.AddDate(0, 0, -2)
+	endDate := now.AddDate(0, 0, 7)
 
-	dbCustomers, err := s.customerRepository.FindByExpirationRange(context.Background(), now, endDate)
+	dbCustomers, err := s.customerRepository.FindByExpirationRange(context.Background(), startDate, endDate)
 	if err != nil {
 		return nil, err
 	}
@@ -147,10 +187,12 @@ func (s *SubscriptionService) getDaysUntilExpiration(now time.Time, expireAt tim
 
 func (s *SubscriptionService) sendNotification(ctx context.Context, customer database.Customer) error {
 	expireDate := customer.ExpireAt.Format("02.01.2006")
+	daysUntilExpiration := s.getDaysUntilExpiration(time.Now(), *customer.ExpireAt)
 
 	messageText := fmt.Sprintf(
 		s.tm.GetText(customer.Language, "subscription_expiring"),
 		expireDate,
+		daysUntilExpiration,
 	)
 
 	_, err := s.telegramBot.SendMessage(ctx, &bot.SendMessageParams{
@@ -165,4 +207,13 @@ func (s *SubscriptionService) sendNotification(ctx context.Context, customer dat
 	})
 
 	return err
+}
+
+func shouldSendRenewalNotification(daysUntilExpiration int) bool {
+	switch daysUntilExpiration {
+	case 7, 3, 1, 0, -2:
+		return true
+	default:
+		return false
+	}
 }

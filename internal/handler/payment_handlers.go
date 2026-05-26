@@ -19,6 +19,15 @@ import (
 func (h Handler) BuyCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	callback := update.CallbackQuery.Message.Message
 	langCode := update.CallbackQuery.From.LanguageCode
+	customer, err := h.customerRepository.FindByTelegramId(ctx, callback.Chat.ID)
+	if err != nil {
+		slog.Error("Error finding customer for buy event", "error", err)
+	} else {
+		h.trackEvent(ctx, customer, callback.Chat.ID, database.EventBuyView, map[string]interface{}{
+			"language": langCode,
+			"stage":    database.LifecycleStageLead,
+		})
+	}
 
 	var priceButtons []models.InlineKeyboardButton
 
@@ -51,7 +60,7 @@ func (h Handler) BuyCallbackHandler(ctx context.Context, b *bot.Bot, update *mod
 		h.translation.GetButton(langCode, "back_button").InlineCallback(CallbackStart),
 	})
 
-	_, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
+	_, err = b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:    callback.Chat.ID,
 		MessageID: callback.ID,
 		ParseMode: models.ParseModeHTML,
@@ -72,6 +81,17 @@ func (h Handler) SellCallbackHandler(ctx context.Context, b *bot.Bot, update *mo
 	langCode := update.CallbackQuery.From.LanguageCode
 	month := callbackQuery["month"]
 	amount := callbackQuery["amount"]
+	customer, err := h.customerRepository.FindByTelegramId(ctx, callback.Chat.ID)
+	if err != nil {
+		slog.Error("Error finding customer for plan select event", "error", err)
+	} else {
+		h.trackEvent(ctx, customer, callback.Chat.ID, database.EventPlanSelect, map[string]interface{}{
+			"language": langCode,
+			"month":    month,
+			"amount":   amount,
+			"stage":    database.LifecycleStageLead,
+		})
+	}
 
 	var keyboard [][]models.InlineKeyboardButton
 
@@ -155,7 +175,7 @@ func (h Handler) SellCallbackHandler(ctx context.Context, b *bot.Bot, update *mo
 		h.translation.GetButton(langCode, "back_button").InlineCallback(CallbackBuy),
 	})
 
-	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
+	_, err = b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
 		ChatID:    callback.Chat.ID,
 		MessageID: callback.ID,
 		ReplyMarkup: models.InlineKeyboardMarkup{
@@ -197,12 +217,31 @@ func (h Handler) PaymentCallbackHandler(ctx context.Context, b *bot.Bot, update 
 		slog.Error("customer not exist", "chatID", callback.Chat.ID, "error", err)
 		return
 	}
+	h.trackEvent(ctx, customer, callback.Chat.ID, database.EventPaymentMethodSelect, map[string]interface{}{
+		"month":        month,
+		"amount":       price,
+		"invoice_type": string(invoiceType),
+		"stage":        database.LifecycleStageLead,
+	})
 
 	ctxWithUsername := context.WithValue(ctx, remnawave.CtxKeyUsername, update.CallbackQuery.From.Username)
 	paymentURL, purchaseId, err := h.paymentService.CreatePurchase(ctxWithUsername, float64(price), month, customer, invoiceType)
 	if err != nil {
 		slog.Error("Error creating payment", "error", err)
 		return
+	}
+	h.trackEvent(ctx, customer, callback.Chat.ID, database.EventInvoiceCreated, map[string]interface{}{
+		"month":        month,
+		"amount":       price,
+		"invoice_type": string(invoiceType),
+		"purchase_id":  purchaseId,
+		"stage":        database.LifecycleStageInvoiceCreated,
+	})
+	if err := h.customerRepository.UpdateFields(ctx, customer.ID, map[string]interface{}{
+		"lifecycle_stage": database.LifecycleStageInvoiceCreated,
+		"lead_score":      customer.LeadScore + 10,
+	}); err != nil {
+		slog.Error("Error updating customer lifecycle after invoice creation", "error", err)
 	}
 
 	langCode := update.CallbackQuery.From.LanguageCode

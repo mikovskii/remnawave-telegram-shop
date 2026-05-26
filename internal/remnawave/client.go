@@ -255,6 +255,17 @@ func (r *Client) CreateOrUpdateUser(ctx context.Context, customerId int64, teleg
 	return r.updateUser(ctx, existingUser, trafficLimit, days)
 }
 
+func (r *Client) GetUserByTelegramID(ctx context.Context, telegramID int64) (*User, error) {
+	users, err := r.getUsersByTelegramID(ctx, telegramID)
+	if err != nil {
+		return nil, err
+	}
+	if len(users) == 0 {
+		return nil, fmt.Errorf("user with telegramId %d not found", telegramID)
+	}
+	return findUserBySuffix(users, telegramID), nil
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------

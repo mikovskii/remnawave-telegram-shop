@@ -19,6 +19,7 @@ type Handler struct {
 	paymentService     *payment.PaymentService
 	syncService        *sync.SyncService
 	referralRepository *database.ReferralRepository
+	botEventRepository *database.BotEventRepository
 	cache              *cache.Cache
 }
 
@@ -29,7 +30,10 @@ func NewHandler(
 	customerRepository *database.CustomerRepository,
 	purchaseRepository *database.PurchaseRepository,
 	cryptoPayClient *cryptopay.Client,
-	yookasaClient *yookasa.Client, referralRepository *database.ReferralRepository, cache *cache.Cache) *Handler {
+	yookasaClient *yookasa.Client,
+	referralRepository *database.ReferralRepository,
+	botEventRepository *database.BotEventRepository,
+	cache *cache.Cache) *Handler {
 	return &Handler{
 		syncService:        syncService,
 		paymentService:     paymentService,
@@ -39,6 +43,7 @@ func NewHandler(
 		yookasaClient:      yookasaClient,
 		translation:        translation,
 		referralRepository: referralRepository,
+		botEventRepository: botEventRepository,
 		cache:              cache,
 	}
 }

@@ -77,6 +77,9 @@ func main() {
 	customerRepository := database.NewCustomerRepository(pool)
 	purchaseRepository := database.NewPurchaseRepository(pool)
 	referralRepository := database.NewReferralRepository(pool)
+	botEventRepository := database.NewBotEventRepository(pool)
+	periodRepository := database.NewSubscriptionPeriodRepository(pool)
+	notificationLogRepository := database.NewNotificationLogRepository(pool)
 
 	cryptoPayClient := cryptopay.NewCryptoPayClient(config.CryptoPayUrl(), config.CryptoPayToken())
 	remnawaveClient := remnawave.NewClient(config.RemnawaveUrl(), config.RemnawaveToken(), config.RemnawaveMode())
@@ -100,7 +103,7 @@ func main() {
 		panic(err)
 	}
 
-	paymentService := payment.NewPaymentService(tm, purchaseRepository, remnawaveClient, customerRepository, b, cryptoPayClient, yookasaClient, plategaClient, referralRepository, cache, moynalogClient)
+	paymentService := payment.NewPaymentService(tm, purchaseRepository, remnawaveClient, customerRepository, b, cryptoPayClient, yookasaClient, plategaClient, referralRepository, botEventRepository, periodRepository, cache, moynalogClient)
 
 	cronScheduler := setupInvoiceChecker(purchaseRepository, cryptoPayClient, paymentService)
 	if cronScheduler != nil {
@@ -108,15 +111,20 @@ func main() {
 		defer cronScheduler.Stop()
 	}
 
-	subService := notification.NewSubscriptionService(customerRepository, purchaseRepository, paymentService, b, tm)
+	subService := notification.NewSubscriptionService(customerRepository, purchaseRepository, paymentService, notificationLogRepository, b, tm)
 
 	subscriptionNotificationCronScheduler := subscriptionChecker(subService)
 	subscriptionNotificationCronScheduler.Start()
 	defer subscriptionNotificationCronScheduler.Stop()
 
+	invoiceService := notification.NewInvoiceService(purchaseRepository, customerRepository, b, tm)
+	invoiceNotificationCronScheduler := invoiceChecker(invoiceService)
+	invoiceNotificationCronScheduler.Start()
+	defer invoiceNotificationCronScheduler.Stop()
+
 	syncService := sync.NewSyncService(remnawaveClient, customerRepository)
 
-	h := handler.NewHandler(syncService, paymentService, tm, customerRepository, purchaseRepository, cryptoPayClient, yookasaClient, referralRepository, cache)
+	h := handler.NewHandler(syncService, paymentService, tm, customerRepository, purchaseRepository, cryptoPayClient, yookasaClient, referralRepository, botEventRepository, cache)
 
 	me, err := b.GetMe(ctx)
 	if err != nil {
@@ -272,6 +280,21 @@ func subscriptionChecker(subService *notification.SubscriptionService) *cron.Cro
 	return c
 }
 
+func invoiceChecker(invoiceService *notification.InvoiceService) *cron.Cron {
+	c := cron.New()
+
+	_, err := c.AddFunc("*/15 * * * *", func() {
+		if err := invoiceService.ProcessAbandonedInvoices(); err != nil {
+			slog.Error("Error sending invoice notifications", "error", err)
+		}
+	})
+
+	if err != nil {
+		panic(err)
+	}
+	return c
+}
+
 func initDatabase(ctx context.Context, connString string) (*pgxpool.Pool, error) {
 	config, err := pgxpool.ParseConfig(connString)
 	if err != nil {
@@ -356,6 +379,17 @@ func checkCryptoPayInvoice(
 				slog.Info("Invoice processed", "invoiceId", invoice.InvoiceID, "purchaseId", purchaseID)
 			}
 
+		}
+		if invoice.InvoiceID != nil && invoice.IsFailed() {
+			payload := strings.Split(invoice.Payload, "&")
+			purchaseID, err := strconv.Atoi(strings.Split(payload[0], "=")[1])
+			if err != nil {
+				slog.Error("Error parsing failed invoice payload", "invoiceId", invoice.InvoiceID, "error", err)
+				continue
+			}
+			if err := paymentService.CancelPayment(ctx, int64(purchaseID)); err != nil {
+				slog.Error("Error canceling failed invoice", "invoiceId", invoice.InvoiceID, "error", err)
+			}
 		}
 	}
 

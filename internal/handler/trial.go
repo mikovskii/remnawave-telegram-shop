@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"remnawave-tg-shop-bot/internal/config"
+	"remnawave-tg-shop-bot/internal/database"
 	"remnawave-tg-shop-bot/internal/remnawave"
 	"remnawave-tg-shop-bot/utils"
 )
@@ -30,6 +31,10 @@ func (h Handler) TrialCallbackHandler(ctx context.Context, b *bot.Bot, update *m
 	}
 	callback := update.CallbackQuery.Message.Message
 	langCode := update.CallbackQuery.From.LanguageCode
+	h.trackEvent(ctx, c, update.CallbackQuery.From.ID, database.EventTrialView, map[string]interface{}{
+		"language": langCode,
+		"stage":    database.LifecycleStageLead,
+	})
 	_, err = b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:    callback.Chat.ID,
 		MessageID: callback.ID,
@@ -69,6 +74,10 @@ func (h Handler) ActivateTrialCallbackHandler(ctx context.Context, b *bot.Bot, u
 		return
 	}
 	langCode := update.CallbackQuery.From.LanguageCode
+	h.trackEvent(ctx, c, update.CallbackQuery.From.ID, database.EventTrialActivate, map[string]interface{}{
+		"language": langCode,
+		"stage":    database.LifecycleStageTrial,
+	})
 	_, err = b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      callback.Chat.ID,
 		MessageID:   callback.ID,
