@@ -83,7 +83,7 @@ func main() {
 		panic(err)
 	}
 
-	paymentService := payment.NewPaymentService(tm, purchaseRepository, remnawaveClient, customerRepository, b, plategaClient, referralRepository, botEventRepository, periodRepository, cache)
+	purchaseService := payment.NewPurchaseService(tm, purchaseRepository, remnawaveClient, customerRepository, b, plategaClient, referralRepository, botEventRepository, periodRepository, cache)
 
 	subService := notification.NewSubscriptionService(customerRepository, notificationLogRepository, b, tm)
 
@@ -98,7 +98,7 @@ func main() {
 
 	syncService := sync.NewSyncService(remnawaveClient, customerRepository)
 
-	h := handler.NewHandler(syncService, paymentService, tm, customerRepository, purchaseRepository, referralRepository, botEventRepository, cache)
+	h := handler.NewHandler(syncService, purchaseService, tm, customerRepository, purchaseRepository, referralRepository, botEventRepository, cache)
 
 	me, err := b.GetMe(ctx)
 	if err != nil {
@@ -156,7 +156,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/healthcheck", fullHealthHandler(pool, remnawaveClient))
 	if config.IsPlategaEnabled() && config.GetPlategaWebHookUrl() != "" {
-		plategaWebhook := platega.NewWebhookHandler(purchaseRepository, paymentService, config.PlategaMerchantId(), config.PlategaSecret())
+		plategaWebhook := platega.NewWebhookHandler(purchaseRepository, purchaseService, config.PlategaMerchantId(), config.PlategaSecret())
 		mux.Handle(config.GetPlategaWebHookUrl(), plategaWebhook)
 	}
 

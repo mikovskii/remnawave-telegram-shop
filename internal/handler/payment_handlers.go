@@ -207,7 +207,7 @@ func (h Handler) PaymentCallbackHandler(ctx context.Context, b *bot.Bot, update 
 	})
 
 	ctxWithUsername := context.WithValue(ctx, remnawave.CtxKeyUsername, update.CallbackQuery.From.Username)
-	paymentURL, purchaseId, err := h.paymentService.CreatePurchase(ctxWithUsername, float64(price), month, customer, invoiceType)
+	paymentURL, purchaseId, err := h.purchaseService.CreateInvoice(ctxWithUsername, float64(price), month, customer, invoiceType)
 	if err != nil {
 		slog.Error("Error creating payment", "error", err)
 		return
@@ -267,7 +267,7 @@ func (h Handler) SuccessPaymentHandler(ctx context.Context, b *bot.Bot, update *
 	}
 
 	ctxWithUsername := context.WithValue(ctx, remnawave.CtxKeyUsername, username)
-	err = h.paymentService.ProcessPurchaseById(ctxWithUsername, int64(purchaseId))
+	err = h.purchaseService.ProcessPurchaseById(ctxWithUsername, int64(purchaseId))
 	if err != nil {
 		slog.Error("Error processing purchase", "error", err)
 	}

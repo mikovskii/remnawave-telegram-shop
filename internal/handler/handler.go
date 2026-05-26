@@ -12,7 +12,7 @@ type Handler struct {
 	customerRepository *database.CustomerRepository
 	purchaseRepository *database.PurchaseRepository
 	translation        *translation.Manager
-	paymentService     *payment.PaymentService
+	purchaseService    *payment.PurchaseService
 	syncService        *sync.SyncService
 	referralRepository *database.ReferralRepository
 	botEventRepository *database.BotEventRepository
@@ -21,7 +21,7 @@ type Handler struct {
 
 func NewHandler(
 	syncService *sync.SyncService,
-	paymentService *payment.PaymentService,
+	purchaseService *payment.PurchaseService,
 	translation *translation.Manager,
 	customerRepository *database.CustomerRepository,
 	purchaseRepository *database.PurchaseRepository,
@@ -30,7 +30,7 @@ func NewHandler(
 	cache *cache.Cache) *Handler {
 	return &Handler{
 		syncService:        syncService,
-		paymentService:     paymentService,
+		purchaseService:    purchaseService,
 		customerRepository: customerRepository,
 		purchaseRepository: purchaseRepository,
 		translation:        translation,

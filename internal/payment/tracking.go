@@ -12,7 +12,7 @@ import (
 
 var paymentTrackEventSem = make(chan struct{}, 100)
 
-func (s PaymentService) trackEvent(ctx context.Context, customer *database.Customer, eventName string, metadata map[string]interface{}) {
+func (s PurchaseService) trackEvent(ctx context.Context, customer *database.Customer, eventName string, metadata map[string]interface{}) {
 	if s.botEventRepository == nil || customer == nil {
 		return
 	}
@@ -153,7 +153,7 @@ func floatPtrFromMetadata(metadata map[string]interface{}, key string) *float64 
 	return nil
 }
 
-func (s PaymentService) createSubscriptionPeriod(ctx context.Context, customerID int64, purchaseID *int64, sourceType string, months int, expiresAt time.Time, amount *float64, currency *string, provider string, metadata map[string]interface{}) {
+func (s ProvisioningService) createSubscriptionPeriod(ctx context.Context, customerID int64, purchaseID *int64, sourceType string, months int, expiresAt time.Time, amount *float64, currency *string, provider string, metadata map[string]interface{}) {
 	if s.periodRepository == nil || expiresAt.IsZero() {
 		return
 	}

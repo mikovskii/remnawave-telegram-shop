@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
+
+	"github.com/go-telegram/bot"
+
 	"remnawave-tg-shop-bot/internal/cache"
 	"remnawave-tg-shop-bot/internal/config"
 	"remnawave-tg-shop-bot/internal/database"
@@ -11,26 +15,18 @@ import (
 	"remnawave-tg-shop-bot/internal/remnawave"
 	"remnawave-tg-shop-bot/internal/translation"
 	"remnawave-tg-shop-bot/utils"
-	"time"
-
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 )
 
-type PaymentService struct {
+type PurchaseService struct {
 	purchaseRepository *database.PurchaseRepository
-	remnawaveClient    *remnawave.Client
 	customerRepository *database.CustomerRepository
-	telegramBot        *bot.Bot
-	translation        *translation.Manager
-	plategaClient      *platega.Client
-	referralRepository *database.ReferralRepository
+	provisioning       *ProvisioningService
+	notifications      *NotificationService
+	providers          map[database.InvoiceType]PaymentProvider
 	botEventRepository *database.BotEventRepository
-	periodRepository   *database.SubscriptionPeriodRepository
-	cache              *cache.Cache
 }
 
-func NewPaymentService(
+func NewPurchaseService(
 	translation *translation.Manager,
 	purchaseRepository *database.PurchaseRepository,
 	remnawaveClient *remnawave.Client,
@@ -41,34 +37,89 @@ func NewPaymentService(
 	botEventRepository *database.BotEventRepository,
 	periodRepository *database.SubscriptionPeriodRepository,
 	cache *cache.Cache,
-) *PaymentService {
-	return &PaymentService{
+) *PurchaseService {
+	notifications := NewNotificationService(telegramBot, translation, cache)
+	return &PurchaseService{
 		purchaseRepository: purchaseRepository,
-		remnawaveClient:    remnawaveClient,
 		customerRepository: customerRepository,
-		telegramBot:        telegramBot,
-		translation:        translation,
-		plategaClient:      plategaClient,
-		referralRepository: referralRepository,
+		provisioning: NewProvisioningService(
+			remnawaveClient,
+			customerRepository,
+			referralRepository,
+			periodRepository,
+		),
+		notifications:      notifications,
+		providers:          NewPaymentProviders(telegramBot, translation, plategaClient),
 		botEventRepository: botEventRepository,
-		periodRepository:   periodRepository,
-		cache:              cache,
 	}
 }
 
-func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int64) error {
-	return s.purchaseRepository.WithFulfillmentLock(ctx, purchaseId, func(lockCtx context.Context) error {
-		return s.processPurchaseByIdLocked(lockCtx, purchaseId)
+func (s PurchaseService) CreateInvoice(ctx context.Context, amount float64, months int, customer *database.Customer, invoiceType database.InvoiceType) (url string, purchaseID int64, err error) {
+	provider, ok := s.providers[invoiceType]
+	if !ok {
+		return "", 0, fmt.Errorf("unknown invoice type: %s", invoiceType)
+	}
+
+	purchaseID, err = s.purchaseRepository.Create(ctx, &database.Purchase{
+		InvoiceType: invoiceType,
+		Status:      database.PurchaseStatusNew,
+		Amount:      amount,
+		Currency:    provider.Currency(),
+		CustomerID:  customer.ID,
+		Month:       months,
+	})
+	if err != nil {
+		slog.Error("Error creating purchase", "error", err)
+		return "", 0, err
+	}
+
+	invoice, err := provider.CreateInvoice(ctx, InvoiceRequest{
+		PurchaseID:  purchaseID,
+		Amount:      amount,
+		Months:      months,
+		Customer:    customer,
+		Description: utils.FormatSubscriptionDescription(months),
+		ReturnURL:   config.BotURL(),
+	})
+	if err != nil {
+		slog.Error("Error creating invoice", "error", err, "invoice_type", invoiceType)
+		return "", 0, err
+	}
+
+	updates := map[string]interface{}{
+		"status": database.PurchaseStatusPending,
+	}
+	if invoice.ExternalID != "" {
+		updates["platega_id"] = invoice.ExternalID
+	}
+	if invoice.URL != "" && invoiceType != database.InvoiceTypeTelegram {
+		updates["platega_url"] = invoice.URL
+	}
+	if err := s.purchaseRepository.UpdateFields(ctx, purchaseID, updates); err != nil {
+		slog.Error("Error updating purchase", "error", err)
+		return "", 0, err
+	}
+
+	return invoice.URL, purchaseID, nil
+}
+
+func (s PurchaseService) ProcessPurchaseById(ctx context.Context, purchaseID int64) error {
+	return s.purchaseRepository.WithFulfillmentLock(ctx, purchaseID, func(lockCtx context.Context) error {
+		return s.processPurchaseByIdLocked(lockCtx, purchaseID)
 	})
 }
 
-func (s PaymentService) processPurchaseByIdLocked(ctx context.Context, purchaseId int64) error {
-	purchase, err := s.purchaseRepository.FindById(ctx, purchaseId)
+func (s PurchaseService) processPurchaseByIdLocked(ctx context.Context, purchaseID int64) error {
+	purchase, err := s.purchaseRepository.FindById(ctx, purchaseID)
 	if err != nil {
 		return err
 	}
 	if purchase == nil {
-		return fmt.Errorf("purchase with crypto invoice id %s not found", utils.MaskHalfInt64(purchaseId))
+		return fmt.Errorf("purchase %s not found", utils.MaskHalfInt64(purchaseID))
+	}
+	if purchase.FulfilledAt != nil {
+		slog.Info("purchase already fulfilled", "purchase_id", utils.MaskHalfInt64(purchase.ID))
+		return nil
 	}
 
 	customer, err := s.customerRepository.FindById(ctx, purchase.CustomerID)
@@ -79,125 +130,18 @@ func (s PaymentService) processPurchaseByIdLocked(ctx context.Context, purchaseI
 		return fmt.Errorf("customer %s not found", utils.MaskHalfInt64(purchase.CustomerID))
 	}
 
-	if messageId, b := s.cache.Get(purchase.ID); b {
-		_, err = s.telegramBot.DeleteMessage(ctx, &bot.DeleteMessageParams{
-			ChatID:    customer.TelegramID,
-			MessageID: messageId,
-		})
-		if err != nil {
-			slog.Error("Error deleting message", "error", err)
-		}
-	}
+	s.notifications.DeleteInvoiceMessage(ctx, purchase.ID, customer.TelegramID)
 
-	if purchase.FulfilledAt != nil {
-		slog.Info("purchase already fulfilled", "purchase_id", utils.MaskHalfInt64(purchase.ID))
-		return nil
-	}
-
-	days := purchase.Month * config.DaysInMonth()
-	targetExpireAt := purchase.ExpireAt
-	if purchase.Status != database.PurchaseStatusPaid || targetExpireAt == nil {
-		expireAt, err := s.remnawaveClient.CalculatePaidExpireAt(ctx, customer.TelegramID, days)
-		if err != nil {
-			return err
-		}
-		markedPaid, err := s.purchaseRepository.MarkAsPaid(ctx, purchase.ID, expireAt)
-		if err != nil {
-			return err
-		}
-		if !markedPaid {
-			updatedPurchase, err := s.purchaseRepository.FindById(ctx, purchase.ID)
-			if err != nil {
-				return err
-			}
-			if updatedPurchase == nil || updatedPurchase.ExpireAt == nil {
-				return fmt.Errorf("purchase %s paid state was not recorded", utils.MaskHalfInt64(purchase.ID))
-			}
-			expireAt = *updatedPurchase.ExpireAt
-		}
-		targetExpireAt = &expireAt
-	}
-
-	if targetExpireAt == nil {
-		return fmt.Errorf("purchase %s has no target expiration", utils.MaskHalfInt64(purchase.ID))
-	}
-
-	if purchase.Status == database.PurchaseStatusPaid && purchase.ExpireAt != nil {
-		slog.Info("purchase payment state already recorded", "purchase_id", utils.MaskHalfInt64(purchase.ID))
-	}
-
-	user, err := s.remnawaveClient.CreateOrUpdateUserWithExpireAt(ctx, customer.ID, customer.TelegramID, config.TrafficLimit(), *targetExpireAt, false)
-	if err != nil {
-		return err
-	}
-	customerFilesToUpdate := map[string]interface{}{
-		"subscription_link": user.SubscriptionUrl,
-		"expire_at":         user.ExpireAt,
-		"lifecycle_stage":   database.LifecycleStagePaid,
-		"lead_score":        customer.LeadScore + 100,
-	}
-	if customer.FirstPaidAt == nil {
-		customerFilesToUpdate["first_paid_at"] = time.Now()
-	}
-
-	err = s.customerRepository.UpdateFields(ctx, customer.ID, customerFilesToUpdate)
+	targetExpireAt, err := s.markPaid(ctx, purchase, customer)
 	if err != nil {
 		return err
 	}
 
-	ctxReferee := context.Background()
-	referee, err := s.referralRepository.FindByReferee(ctxReferee, customer.TelegramID)
+	result, err := s.provisioning.FulfillPurchase(ctx, customer, purchase, targetExpireAt)
 	if err != nil {
 		return err
 	}
-	if referee != nil && !referee.BonusGranted {
-		bonusClaimed, err := s.referralRepository.MarkBonusGranted(ctxReferee, referee.ID, config.GetReferralDays())
-		if err != nil {
-			return err
-		}
-		if !bonusClaimed {
-			slog.Info("referral bonus already granted", "referral_id", referee.ID)
-		} else {
-			refereeCustomer, err := s.customerRepository.FindByTelegramId(ctxReferee, referee.ReferrerID)
-			if err != nil {
-				return err
-			}
-			refereeUser, err := s.remnawaveClient.CreateOrUpdateUser(ctxReferee, refereeCustomer.ID, refereeCustomer.TelegramID, config.TrafficLimit(), config.GetReferralDays(), false)
-			if err != nil {
-				return err
-			}
-			refereeUserFilesToUpdate := map[string]interface{}{
-				"subscription_link": refereeUser.SubscriptionUrl,
-				"expire_at":         refereeUser.ExpireAt,
-				"lifecycle_stage":   database.LifecycleStagePaid,
-			}
-			err = s.customerRepository.UpdateFields(ctxReferee, refereeCustomer.ID, refereeUserFilesToUpdate)
-			if err != nil {
-				return err
-			}
-			s.createSubscriptionPeriod(ctxReferee, refereeCustomer.ID, nil, database.SubscriptionSourceReferralBonus, 0, refereeUser.ExpireAt, nil, nil, "", map[string]interface{}{
-				"referral_id": referee.ID,
-				"earned_days": config.GetReferralDays(),
-			})
-			slog.Info("Granted referral bonus", "customer_id", utils.MaskHalfInt64(refereeCustomer.ID))
-			_, err = s.telegramBot.SendMessage(ctxReferee, &bot.SendMessageParams{
-				ChatID:    refereeCustomer.TelegramID,
-				ParseMode: models.ParseModeHTML,
-				Text:      fmt.Sprintf(s.translation.GetText(refereeCustomer.Language, "referral_bonus_granted"), config.GetReferralDays()),
-				ReplyMarkup: models.InlineKeyboardMarkup{
-					InlineKeyboard: s.createConnectKeyboard(refereeCustomer),
-				},
-			})
-			if err != nil {
-				slog.Error("Error sending referral bonus message", "error", err, "referral_id", referee.ID)
-			}
-		}
-	}
 
-	s.createSubscriptionPeriod(ctx, customer.ID, &purchase.ID, database.SubscriptionSourcePaid, purchase.Month, user.ExpireAt, &purchase.Amount, &purchase.Currency, string(purchase.InvoiceType), map[string]interface{}{
-		"purchase_id":  purchase.ID,
-		"invoice_type": string(purchase.InvoiceType),
-	})
 	fulfilled, err := s.purchaseRepository.MarkFulfilled(ctx, purchase.ID)
 	if err != nil {
 		return err
@@ -215,246 +159,98 @@ func (s PaymentService) processPurchaseByIdLocked(ctx context.Context, purchaseI
 		"stage":        database.LifecycleStagePaid,
 	})
 
-	_, err = s.telegramBot.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: customer.TelegramID,
-		Text:   s.translation.GetText(customer.Language, "subscription_activated"),
-		ReplyMarkup: models.InlineKeyboardMarkup{
-			InlineKeyboard: s.createConnectKeyboard(customer),
-		},
-	})
-	if err != nil {
-		slog.Error("Error sending subscription activation message", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
+	if result.ReferralBonus != nil {
+		s.notifications.SendReferralBonus(ctx, result.ReferralBonus.Customer, result.ReferralBonus.ReferralID)
 	}
+	s.notifications.SendSubscriptionActivated(ctx, customer, purchase.ID)
 
 	slog.Info("purchase processed", "purchase_id", utils.MaskHalfInt64(purchase.ID), "type", purchase.InvoiceType, "customer_id", utils.MaskHalfInt64(customer.ID))
-
 	return nil
 }
 
-func (s PaymentService) createConnectKeyboard(customer *database.Customer) [][]models.InlineKeyboardButton {
-	var inlineCustomerKeyboard [][]models.InlineKeyboardButton
-
-	bd := s.translation.GetButton(customer.Language, "connect_button")
-	if config.GetMiniAppURL() != "" {
-		inlineCustomerKeyboard = append(inlineCustomerKeyboard, []models.InlineKeyboardButton{bd.InlineWebApp(config.GetMiniAppURL())})
-	} else {
-		inlineCustomerKeyboard = append(inlineCustomerKeyboard, []models.InlineKeyboardButton{bd.InlineCallback("connect")})
+func (s PurchaseService) markPaid(ctx context.Context, purchase *database.Purchase, customer *database.Customer) (time.Time, error) {
+	if purchase.Status == database.PurchaseStatusPaid && purchase.ExpireAt != nil {
+		slog.Info("purchase payment state already recorded", "purchase_id", utils.MaskHalfInt64(purchase.ID))
+		return *purchase.ExpireAt, nil
 	}
 
-	inlineCustomerKeyboard = append(inlineCustomerKeyboard, []models.InlineKeyboardButton{
-		s.translation.GetButton(customer.Language, "back_button").InlineCallback("start"),
-	})
-	return inlineCustomerKeyboard
+	expireAt, err := s.provisioning.CalculatePaidExpireAt(ctx, customer.TelegramID, purchase.Month)
+	if err != nil {
+		return time.Time{}, err
+	}
+	markedPaid, err := s.purchaseRepository.MarkAsPaid(ctx, purchase.ID, expireAt)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if markedPaid {
+		return expireAt, nil
+	}
+
+	updatedPurchase, err := s.purchaseRepository.FindById(ctx, purchase.ID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if updatedPurchase == nil || updatedPurchase.ExpireAt == nil {
+		return time.Time{}, fmt.Errorf("purchase %s paid state was not recorded", utils.MaskHalfInt64(purchase.ID))
+	}
+	return *updatedPurchase.ExpireAt, nil
 }
 
-func (s PaymentService) CreatePurchase(ctx context.Context, amount float64, months int, customer *database.Customer, invoiceType database.InvoiceType) (url string, purchaseId int64, err error) {
-	switch invoiceType {
-	case database.InvoiceTypeTelegram:
-		return s.createTelegramInvoice(ctx, amount, months, customer)
-	case database.InvoiceTypePlategaSBP,
-		database.InvoiceTypePlategaCards,
-		database.InvoiceTypePlategaAcquiring,
-		database.InvoiceTypePlategaWorldwide,
-		database.InvoiceTypePlategaCrypto:
-		return s.createPlategaInvoice(ctx, amount, months, customer, invoiceType)
-	default:
-		return "", 0, fmt.Errorf("unknown invoice type: %s", invoiceType)
-	}
-}
-
-func (s PaymentService) createPlategaInvoice(ctx context.Context, amount float64, months int, customer *database.Customer, invoiceType database.InvoiceType) (url string, purchaseId int64, err error) {
-	if s.plategaClient == nil {
-		return "", 0, fmt.Errorf("platega client not configured")
-	}
-
-	provider, err := platega.ProviderFor(s.plategaClient, invoiceType)
-	if err != nil {
-		return "", 0, err
-	}
-
-	purchaseId, err = s.purchaseRepository.Create(ctx, &database.Purchase{
-		InvoiceType: invoiceType,
-		Status:      database.PurchaseStatusNew,
-		Amount:      amount,
-		Currency:    "RUB",
-		CustomerID:  customer.ID,
-		Month:       months,
-	})
-	if err != nil {
-		slog.Error("Error creating purchase", "error", err)
-		return "", 0, err
-	}
-
-	redirectURL, transactionID, err := provider.CreateInvoice(
-		ctx, purchaseId, amount, "RUB",
-		utils.FormatSubscriptionDescription(months),
-		config.BotURL(),
-	)
-	if err != nil {
-		slog.Error("Error creating platega invoice", "error", err, "invoice_type", invoiceType)
-		return "", 0, err
-	}
-
-	updates := map[string]interface{}{
-		"platega_id":  transactionID,
-		"platega_url": redirectURL,
-		"status":      database.PurchaseStatusPending,
-	}
-	if err := s.purchaseRepository.UpdateFields(ctx, purchaseId, updates); err != nil {
-		slog.Error("Error updating purchase", "error", err)
-		return "", 0, err
-	}
-
-	return redirectURL, purchaseId, nil
-}
-
-func (s PaymentService) createTelegramInvoice(ctx context.Context, amount float64, months int, customer *database.Customer) (url string, purchaseId int64, err error) {
-	purchaseId, err = s.purchaseRepository.Create(ctx, &database.Purchase{
-		InvoiceType: database.InvoiceTypeTelegram,
-		Status:      database.PurchaseStatusNew,
-		Amount:      amount,
-		Currency:    "STARS",
-		CustomerID:  customer.ID,
-		Month:       months,
-	})
-	if err != nil {
-		slog.Error("Error creating purchase", "error", err)
-		return "", 0, nil
-	}
-
-	invoiceUrl, err := s.telegramBot.CreateInvoiceLink(ctx, &bot.CreateInvoiceLinkParams{
-		Title:    s.translation.GetText(customer.Language, "invoice_title"),
-		Currency: "XTR",
-		Prices: []models.LabeledPrice{
-			{
-				Label:  s.translation.GetText(customer.Language, "invoice_label"),
-				Amount: int(amount),
-			},
-		},
-		Description: s.translation.GetText(customer.Language, "invoice_description"),
-		Payload:     fmt.Sprintf("%d&%s", purchaseId, remnawave.UsernameFromCtx(ctx)),
-	})
-
-	updates := map[string]interface{}{
-		"status": database.PurchaseStatusPending,
-	}
-
-	err = s.purchaseRepository.UpdateFields(ctx, purchaseId, updates)
-	if err != nil {
-		slog.Error("Error updating purchase", "error", err)
-		return "", 0, err
-	}
-
-	return invoiceUrl, purchaseId, nil
-}
-
-func (s PaymentService) ActivateTrial(ctx context.Context, telegramId int64) (string, error) {
+func (s PurchaseService) ActivateTrial(ctx context.Context, telegramID int64) (string, error) {
 	if config.TrialDays() == 0 {
 		return "", nil
 	}
-	customer, err := s.customerRepository.FindByTelegramId(ctx, telegramId)
+	customer, err := s.customerRepository.FindByTelegramId(ctx, telegramID)
 	if err != nil {
 		slog.Error("Error finding customer", "error", err)
 		return "", err
 	}
 	if customer == nil {
-		return "", fmt.Errorf("customer %d not found", telegramId)
+		return "", fmt.Errorf("customer %d not found", telegramID)
 	}
-	user, err := s.remnawaveClient.CreateOrUpdateUser(ctx, customer.ID, telegramId, config.TrialTrafficLimit(), config.TrialDays(), true)
-	if err != nil {
-		slog.Error("Error creating user", "error", err)
-		return "", err
-	}
-
-	customerFilesToUpdate := map[string]interface{}{
-		"subscription_link": user.SubscriptionUrl,
-		"expire_at":         user.ExpireAt,
-		"lifecycle_stage":   database.LifecycleStageTrial,
-	}
-
-	err = s.customerRepository.UpdateFields(ctx, customer.ID, customerFilesToUpdate)
-	if err != nil {
-		return "", err
-	}
-	s.createSubscriptionPeriod(ctx, customer.ID, nil, database.SubscriptionSourceTrial, 0, user.ExpireAt, nil, nil, "", map[string]interface{}{
-		"trial_days": config.TrialDays(),
-	})
-
-	return user.SubscriptionUrl, nil
-
+	return s.provisioning.ActivateTrial(ctx, customer)
 }
 
-func (s PaymentService) CancelYookassaPayment(purchaseId int64) error {
-	return s.CancelPayment(context.Background(), purchaseId)
-}
-
-func (s PaymentService) CancelPayment(ctx context.Context, purchaseId int64) error {
+func (s PurchaseService) CancelPayment(ctx context.Context, purchaseID int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	purchase, err := s.purchaseRepository.FindById(ctx, purchaseId)
+
+	purchase, err := s.purchaseRepository.FindById(ctx, purchaseID)
 	if err != nil {
 		return err
 	}
 	if purchase == nil {
-		return fmt.Errorf("purchase with crypto invoice id %s not found", utils.MaskHalfInt64(purchaseId))
+		return fmt.Errorf("purchase %s not found", utils.MaskHalfInt64(purchaseID))
 	}
 
-	purchaseFieldsToUpdate := map[string]interface{}{
+	if err := s.purchaseRepository.UpdateFields(ctx, purchaseID, map[string]interface{}{
 		"status": database.PurchaseStatusCancel,
-	}
-
-	err = s.purchaseRepository.UpdateFields(ctx, purchaseId, purchaseFieldsToUpdate)
-	if err != nil {
+	}); err != nil {
 		return err
 	}
+
 	customer, err := s.customerRepository.FindById(ctx, purchase.CustomerID)
 	if err != nil {
 		return err
 	}
-	if customer != nil && purchase.FailedNotifiedAt == nil {
-		claimed, err := s.purchaseRepository.ClaimFailedNotification(ctx, purchase.ID, time.Now().Add(-15*time.Minute))
-		if err != nil {
-			slog.Error("claim payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
-		} else if claimed {
-			if err := s.sendPaymentFailedNotification(ctx, customer, purchase); err != nil {
-				slog.Error("send payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
-			} else if _, err := s.purchaseRepository.MarkFailedNotifiedIfUnset(ctx, purchase.ID); err != nil {
-				slog.Error("mark payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
-			}
-		}
-	}
-
-	return nil
-}
-
-func (s PaymentService) sendPaymentFailedNotification(ctx context.Context, customer *database.Customer, purchase *database.Purchase) error {
-	if s.telegramBot == nil || s.translation == nil {
+	if customer == nil || purchase.FailedNotifiedAt != nil {
 		return nil
 	}
-	paymentURL := paymentURLForPurchase(purchase)
-	keyboard := [][]models.InlineKeyboardButton{}
-	if paymentURL != "" {
-		keyboard = append(keyboard, []models.InlineKeyboardButton{s.translation.GetButton(customer.Language, "pay_button").InlineURL(paymentURL)})
-	}
-	keyboard = append(keyboard, []models.InlineKeyboardButton{s.translation.GetButton(customer.Language, "renew_subscription_button").InlineCallback("buy")})
 
-	text := fmt.Sprintf(s.translation.GetText(customer.Language, "payment_failed"), purchase.Month, purchase.Amount, purchase.Currency)
-	_, err := s.telegramBot.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      customer.TelegramID,
-		Text:        text,
-		ParseMode:   models.ParseModeHTML,
-		ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: keyboard},
-	})
-	return err
-}
-
-func paymentURLForPurchase(purchase *database.Purchase) string {
-	switch {
-	case purchase == nil:
-		return ""
-	case purchase.PlategaURL != nil:
-		return *purchase.PlategaURL
-	default:
-		return ""
+	claimed, err := s.purchaseRepository.ClaimFailedNotification(ctx, purchase.ID, time.Now().Add(-15*time.Minute))
+	if err != nil {
+		slog.Error("claim payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
+		return nil
 	}
+	if !claimed {
+		return nil
+	}
+	if err := s.notifications.SendPaymentFailed(ctx, customer, purchase); err != nil {
+		slog.Error("send payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
+		return nil
+	}
+	if _, err := s.purchaseRepository.MarkFailedNotifiedIfUnset(ctx, purchase.ID); err != nil {
+		slog.Error("mark payment failed notification", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
+	}
+	return nil
 }

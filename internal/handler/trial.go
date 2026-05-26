@@ -68,7 +68,7 @@ func (h Handler) ActivateTrialCallbackHandler(ctx context.Context, b *bot.Bot, u
 	}
 	callback := update.CallbackQuery.Message.Message
 	ctxWithUsername := context.WithValue(ctx, remnawave.CtxKeyUsername, update.CallbackQuery.From.Username)
-	_, err = h.paymentService.ActivateTrial(ctxWithUsername, update.CallbackQuery.From.ID)
+	_, err = h.purchaseService.ActivateTrial(ctxWithUsername, update.CallbackQuery.From.ID)
 	if err != nil {
 		slog.Error("Error activating trial", "error", err)
 		return
