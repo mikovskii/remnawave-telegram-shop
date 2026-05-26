@@ -52,8 +52,11 @@ type Purchase struct {
 	YookasaID           *uuid.UUID     `db:"yookasa_id"`
 	PlategaID           *string        `db:"platega_id"`
 	PlategaURL          *string        `db:"platega_url"`
+	AbandonedClaimedAt  *time.Time     `db:"abandoned_claimed_at"`
 	AbandonedNotifiedAt *time.Time     `db:"abandoned_notified_at"`
+	FailedClaimedAt     *time.Time     `db:"failed_claimed_at"`
 	FailedNotifiedAt    *time.Time     `db:"failed_notified_at"`
+	FulfilledAt         *time.Time     `db:"fulfilled_at"`
 }
 
 var purchaseColumns = []string{
@@ -73,8 +76,11 @@ var purchaseColumns = []string{
 	"yookasa_id",
 	"platega_id",
 	"platega_url",
+	"abandoned_claimed_at",
 	"abandoned_notified_at",
+	"failed_claimed_at",
 	"failed_notified_at",
+	"fulfilled_at",
 }
 
 func scanPurchase(scanner interface {
@@ -97,8 +103,11 @@ func scanPurchase(scanner interface {
 		&purchase.YookasaID,
 		&purchase.PlategaID,
 		&purchase.PlategaURL,
+		&purchase.AbandonedClaimedAt,
 		&purchase.AbandonedNotifiedAt,
+		&purchase.FailedClaimedAt,
 		&purchase.FailedNotifiedAt,
+		&purchase.FulfilledAt,
 	)
 }
 
@@ -224,13 +233,17 @@ func (p *PurchaseRepository) UpdateFields(ctx context.Context, id int64, updates
 	return nil
 }
 
-func (pr *PurchaseRepository) MarkAsPaid(ctx context.Context, purchaseID int64) (bool, error) {
+func (pr *PurchaseRepository) MarkAsPaid(ctx context.Context, purchaseID int64, expireAt time.Time) (bool, error) {
 	query := sq.Update("purchase").
 		Set("status", PurchaseStatusPaid).
 		Set("paid_at", time.Now()).
+		Set("expire_at", expireAt).
 		Where(sq.And{
 			sq.Eq{"id": purchaseID},
-			sq.NotEq{"status": PurchaseStatusPaid},
+			sq.Or{
+				sq.NotEq{"status": PurchaseStatusPaid},
+				sq.Eq{"expire_at": nil},
+			},
 		}).
 		PlaceholderFormat(sq.Dollar)
 
@@ -247,12 +260,74 @@ func (pr *PurchaseRepository) MarkAsPaid(ctx context.Context, purchaseID int64) 
 	return result.RowsAffected() > 0, nil
 }
 
+func (pr *PurchaseRepository) MarkFulfilled(ctx context.Context, purchaseID int64) error {
+	query := sq.Update("purchase").
+		Set("fulfilled_at", time.Now()).
+		Where(sq.Eq{"id": purchaseID}).
+		PlaceholderFormat(sq.Dollar)
+
+	sql, args, err := query.ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build mark fulfilled query: %w", err)
+	}
+
+	if _, err := pr.pool.Exec(ctx, sql, args...); err != nil {
+		return fmt.Errorf("failed to mark purchase fulfilled: %w", err)
+	}
+
+	return nil
+}
+
 func (pr *PurchaseRepository) MarkAbandonedNotifiedIfUnset(ctx context.Context, purchaseID int64) (bool, error) {
-	return pr.markNotifiedIfUnset(ctx, purchaseID, "abandoned_notified_at")
+	query := buildMarkAbandonedNotifiedQuery(purchaseID)
+
+	sql, args, err := query.ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build abandoned notification mark query: %w", err)
+	}
+
+	result, err := pr.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to mark abandoned purchase notification: %w", err)
+	}
+
+	return result.RowsAffected() > 0, nil
+}
+
+func (pr *PurchaseRepository) ClaimAbandonedNotification(ctx context.Context, purchaseID int64, staleBefore time.Time) (bool, error) {
+	query := buildClaimAbandonedNotificationQuery(purchaseID, staleBefore)
+
+	sql, args, err := query.ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build abandoned notification claim query: %w", err)
+	}
+
+	result, err := pr.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to claim abandoned purchase notification: %w", err)
+	}
+
+	return result.RowsAffected() > 0, nil
 }
 
 func (pr *PurchaseRepository) MarkFailedNotifiedIfUnset(ctx context.Context, purchaseID int64) (bool, error) {
 	return pr.markNotifiedIfUnset(ctx, purchaseID, "failed_notified_at")
+}
+
+func (pr *PurchaseRepository) ClaimFailedNotification(ctx context.Context, purchaseID int64, staleBefore time.Time) (bool, error) {
+	query := buildClaimFailedNotificationQuery(purchaseID, staleBefore)
+
+	sql, args, err := query.ToSql()
+	if err != nil {
+		return false, fmt.Errorf("failed to build failed notification claim query: %w", err)
+	}
+
+	result, err := pr.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to claim failed purchase notification: %w", err)
+	}
+
+	return result.RowsAffected() > 0, nil
 }
 
 func (pr *PurchaseRepository) markNotifiedIfUnset(ctx context.Context, purchaseID int64, field string) (bool, error) {
@@ -277,6 +352,46 @@ func (pr *PurchaseRepository) markNotifiedIfUnset(ctx context.Context, purchaseI
 	return result.RowsAffected() > 0, nil
 }
 
+func buildMarkAbandonedNotifiedQuery(purchaseID int64) sq.UpdateBuilder {
+	return sq.Update("purchase").
+		Set("abandoned_notified_at", time.Now()).
+		Where(sq.And{
+			sq.Eq{"id": purchaseID},
+			sq.Eq{"abandoned_notified_at": nil},
+			sq.Eq{"status": []PurchaseStatus{PurchaseStatusNew, PurchaseStatusPending}},
+		}).
+		PlaceholderFormat(sq.Dollar)
+}
+
+func buildClaimAbandonedNotificationQuery(purchaseID int64, staleBefore time.Time) sq.UpdateBuilder {
+	return sq.Update("purchase").
+		Set("abandoned_claimed_at", time.Now()).
+		Where(sq.And{
+			sq.Eq{"id": purchaseID},
+			sq.Eq{"abandoned_notified_at": nil},
+			sq.Eq{"status": []PurchaseStatus{PurchaseStatusNew, PurchaseStatusPending}},
+			sq.Or{
+				sq.Eq{"abandoned_claimed_at": nil},
+				sq.LtOrEq{"abandoned_claimed_at": staleBefore},
+			},
+		}).
+		PlaceholderFormat(sq.Dollar)
+}
+
+func buildClaimFailedNotificationQuery(purchaseID int64, staleBefore time.Time) sq.UpdateBuilder {
+	return sq.Update("purchase").
+		Set("failed_claimed_at", time.Now()).
+		Where(sq.And{
+			sq.Eq{"id": purchaseID},
+			sq.Eq{"failed_notified_at": nil},
+			sq.Or{
+				sq.Eq{"failed_claimed_at": nil},
+				sq.LtOrEq{"failed_claimed_at": staleBefore},
+			},
+		}).
+		PlaceholderFormat(sq.Dollar)
+}
+
 func (pr *PurchaseRepository) FindAbandonedInvoices(ctx context.Context, olderThan time.Time) (*[]Purchase, error) {
 	query := sq.Select(purchaseColumns...).
 		From("purchase").
@@ -284,6 +399,10 @@ func (pr *PurchaseRepository) FindAbandonedInvoices(ctx context.Context, olderTh
 			sq.Eq{"status": []PurchaseStatus{PurchaseStatusNew, PurchaseStatusPending}},
 			sq.LtOrEq{"created_at": olderThan},
 			sq.Eq{"abandoned_notified_at": nil},
+			sq.Or{
+				sq.Eq{"abandoned_claimed_at": nil},
+				sq.LtOrEq{"abandoned_claimed_at": olderThan},
+			},
 			sq.NotEq{"invoice_type": InvoiceTypeTribute},
 		}).
 		OrderBy("created_at ASC").

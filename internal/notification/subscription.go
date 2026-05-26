@@ -26,7 +26,9 @@ type paymentProcessor interface {
 }
 
 type notificationLogger interface {
-	Create(ctx context.Context, customerID int64, notificationType string, dedupeKey string, metadata map[string]interface{}) (bool, error)
+	Claim(ctx context.Context, customerID int64, notificationType string, dedupeKey string, metadata map[string]interface{}) (bool, error)
+	MarkSent(ctx context.Context, customerID int64, notificationType string, dedupeKey string) error
+	MarkFailed(ctx context.Context, customerID int64, notificationType string, dedupeKey string, sendErr error) error
 }
 
 type SubscriptionService struct {
@@ -109,17 +111,17 @@ func (s *SubscriptionService) ProcessSubscriptionExpiration() error {
 		if !shouldSendRenewalNotification(daysUntilExpiration) {
 			continue
 		}
+		dedupeKey := fmt.Sprintf("%s:%d", customer.ExpireAt.Format("2006-01-02"), daysUntilExpiration)
 		if s.notificationLogger != nil {
-			dedupeKey := fmt.Sprintf("%s:%d", customer.ExpireAt.Format("2006-01-02"), daysUntilExpiration)
-			created, err := s.notificationLogger.Create(ctx, customer.ID, database.NotificationRenewal, dedupeKey, map[string]interface{}{
+			claimed, err := s.notificationLogger.Claim(ctx, customer.ID, database.NotificationRenewal, dedupeKey, map[string]interface{}{
 				"days_until_expiration": daysUntilExpiration,
 				"expire_at":             customer.ExpireAt.Format(time.RFC3339),
 			})
 			if err != nil {
-				slog.Error("Failed to create renewal notification log", "customer_id", customer.ID, "error", err)
+				slog.Error("Failed to claim renewal notification log", "customer_id", customer.ID, "error", err)
 				continue
 			}
-			if !created {
+			if !claimed {
 				continue
 			}
 		}
@@ -131,11 +133,25 @@ func (s *SubscriptionService) ProcessSubscriptionExpiration() error {
 
 		err := send(ctx, customer)
 		if err != nil {
+			if s.notificationLogger != nil {
+				if markErr := s.notificationLogger.MarkFailed(ctx, customer.ID, database.NotificationRenewal, dedupeKey, err); markErr != nil {
+					slog.Error("Failed to mark renewal notification failed", "customer_id", customer.ID, "error", markErr)
+				}
+			}
 			slog.Error("Failed to send notification",
 				"customer_id", customer.ID,
 				"days_until_expiration", daysUntilExpiration,
 				"error", err)
 			continue
+		}
+		if s.notificationLogger != nil {
+			if err := s.notificationLogger.MarkSent(ctx, customer.ID, database.NotificationRenewal, dedupeKey); err != nil {
+				slog.Error("Failed to mark renewal notification sent",
+					"customer_id", customer.ID,
+					"days_until_expiration", daysUntilExpiration,
+					"error", err)
+				continue
+			}
 		}
 
 		slog.Info("Notification sent successfully",
