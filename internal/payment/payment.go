@@ -2,18 +2,14 @@ package payment
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"remnawave-tg-shop-bot/internal/cache"
 	"remnawave-tg-shop-bot/internal/config"
-	"remnawave-tg-shop-bot/internal/cryptopay"
 	"remnawave-tg-shop-bot/internal/database"
-	"remnawave-tg-shop-bot/internal/moynalog"
 	"remnawave-tg-shop-bot/internal/platega"
 	"remnawave-tg-shop-bot/internal/remnawave"
 	"remnawave-tg-shop-bot/internal/translation"
-	"remnawave-tg-shop-bot/internal/yookasa"
 	"remnawave-tg-shop-bot/utils"
 	"time"
 
@@ -27,14 +23,11 @@ type PaymentService struct {
 	customerRepository *database.CustomerRepository
 	telegramBot        *bot.Bot
 	translation        *translation.Manager
-	cryptoPayClient    *cryptopay.Client
-	yookasaClient      *yookasa.Client
 	plategaClient      *platega.Client
 	referralRepository *database.ReferralRepository
 	botEventRepository *database.BotEventRepository
 	periodRepository   *database.SubscriptionPeriodRepository
 	cache              *cache.Cache
-	moynalogClient     *moynalog.Client
 }
 
 func NewPaymentService(
@@ -43,14 +36,11 @@ func NewPaymentService(
 	remnawaveClient *remnawave.Client,
 	customerRepository *database.CustomerRepository,
 	telegramBot *bot.Bot,
-	cryptoPayClient *cryptopay.Client,
-	yookasaClient *yookasa.Client,
 	plategaClient *platega.Client,
 	referralRepository *database.ReferralRepository,
 	botEventRepository *database.BotEventRepository,
 	periodRepository *database.SubscriptionPeriodRepository,
 	cache *cache.Cache,
-	moynalogClient *moynalog.Client,
 ) *PaymentService {
 	return &PaymentService{
 		purchaseRepository: purchaseRepository,
@@ -58,14 +48,11 @@ func NewPaymentService(
 		customerRepository: customerRepository,
 		telegramBot:        telegramBot,
 		translation:        translation,
-		cryptoPayClient:    cryptoPayClient,
-		yookasaClient:      yookasaClient,
 		plategaClient:      plategaClient,
 		referralRepository: referralRepository,
 		botEventRepository: botEventRepository,
 		periodRepository:   periodRepository,
 		cache:              cache,
-		moynalogClient:     moynalogClient,
 	}
 }
 
@@ -156,22 +143,6 @@ func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int6
 	if err != nil {
 		return err
 	}
-	if purchase.InvoiceType == database.InvoiceTypeYookasa && s.moynalogClient != nil {
-		moynalogCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		defer cancel()
-		if err := s.sendReceiptToMoynalog(moynalogCtx, purchase); err != nil {
-			slog.Error("send receipt to Moynalog", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
-			_, sendErr := s.telegramBot.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: config.GetAdminTelegramId(),
-				Text:   "Ошибка при отправке чека в Мой налог. Проверьте логи.",
-			})
-			if sendErr != nil {
-				slog.Error("notify admin about Moynalog failure", "error", sendErr, "purchase_id", utils.MaskHalfInt64(purchase.ID))
-			}
-			return err
-		}
-		slog.Info("Moynalog receipt sent", "purchase_id", utils.MaskHalfInt64(purchase.ID))
-	}
 
 	ctxReferee := context.Background()
 	referee, err := s.referralRepository.FindByReferee(ctxReferee, customer.TelegramID)
@@ -249,14 +220,8 @@ func (s PaymentService) createConnectKeyboard(customer *database.Customer) [][]m
 
 func (s PaymentService) CreatePurchase(ctx context.Context, amount float64, months int, customer *database.Customer, invoiceType database.InvoiceType) (url string, purchaseId int64, err error) {
 	switch invoiceType {
-	case database.InvoiceTypeCrypto:
-		return s.createCryptoInvoice(ctx, amount, months, customer)
-	case database.InvoiceTypeYookasa:
-		return s.createYookasaInvoice(ctx, amount, months, customer)
 	case database.InvoiceTypeTelegram:
 		return s.createTelegramInvoice(ctx, amount, months, customer)
-	case database.InvoiceTypeTribute:
-		return s.createTributeInvoice(ctx, amount, months, customer)
 	case database.InvoiceTypePlategaSBP,
 		database.InvoiceTypePlategaCards,
 		database.InvoiceTypePlategaAcquiring,
@@ -312,131 +277,6 @@ func (s PaymentService) createPlategaInvoice(ctx context.Context, amount float64
 	}
 
 	return redirectURL, purchaseId, nil
-}
-
-var ErrCustomerNotFound = errors.New("customer not found")
-
-func (s PaymentService) CancelTributePurchase(ctx context.Context, telegramId int64) error {
-	slog.Info("Canceling tribute purchase", "telegram_id", utils.MaskHalfInt64(telegramId))
-	customer, err := s.customerRepository.FindByTelegramId(ctx, telegramId)
-	if err != nil {
-		return err
-	}
-	if customer == nil {
-		return ErrCustomerNotFound
-	}
-	tributePurchase, err := s.purchaseRepository.FindByCustomerIDAndInvoiceTypeLast(ctx, customer.ID, database.InvoiceTypeTribute)
-	if err != nil {
-		return err
-	}
-	if tributePurchase == nil {
-		return errors.New("tribute purchase not found")
-	}
-	expireAt, err := s.remnawaveClient.DecreaseSubscription(ctx, telegramId, config.TrafficLimit(), -tributePurchase.Month*config.DaysInMonth())
-	if err != nil {
-		return err
-	}
-
-	if err := s.customerRepository.UpdateFields(ctx, customer.ID, map[string]interface{}{
-		"expire_at": expireAt,
-	}); err != nil {
-		return err
-	}
-
-	if err := s.purchaseRepository.UpdateFields(ctx, tributePurchase.ID, map[string]interface{}{
-		"status": database.PurchaseStatusCancel,
-	}); err != nil {
-		return err
-	}
-	_, err = s.telegramBot.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:    telegramId,
-		ParseMode: models.ParseModeHTML,
-		Text:      s.translation.GetText(customer.Language, "tribute_cancelled"),
-	})
-	if err != nil {
-		slog.Error("Error sending message about tribute cancelled", "error", err, "telegram_id", utils.MaskHalfInt64(telegramId))
-	}
-	slog.Info("Canceled tribute purchase", "purchase_id", utils.MaskHalfInt64(tributePurchase.ID), "telegram_id", utils.MaskHalfInt64(telegramId))
-	return nil
-}
-
-func (s PaymentService) createCryptoInvoice(ctx context.Context, amount float64, months int, customer *database.Customer) (url string, purchaseId int64, err error) {
-	purchaseId, err = s.purchaseRepository.Create(ctx, &database.Purchase{
-		InvoiceType: database.InvoiceTypeCrypto,
-		Status:      database.PurchaseStatusNew,
-		Amount:      amount,
-		Currency:    "RUB",
-		CustomerID:  customer.ID,
-		Month:       months,
-	})
-	if err != nil {
-		slog.Error("Error creating purchase", "error", err)
-		return "", 0, err
-	}
-
-	invoice, err := s.cryptoPayClient.CreateInvoice(&cryptopay.InvoiceRequest{
-		CurrencyType:   "fiat",
-		Fiat:           "RUB",
-		Amount:         fmt.Sprintf("%d", int(amount)),
-		AcceptedAssets: "USDT",
-		Payload:        fmt.Sprintf("purchaseId=%d&username=%s", purchaseId, remnawave.UsernameFromCtx(ctx)),
-		Description:    fmt.Sprintf("Subscription on %d month", months),
-		PaidBtnName:    "callback",
-		PaidBtnUrl:     config.BotURL(),
-	})
-	if err != nil {
-		slog.Error("Error creating invoice", "error", err)
-		return "", 0, err
-	}
-
-	updates := map[string]interface{}{
-		"crypto_invoice_url": invoice.BotInvoiceUrl,
-		"crypto_invoice_id":  invoice.InvoiceID,
-		"status":             database.PurchaseStatusPending,
-	}
-
-	err = s.purchaseRepository.UpdateFields(ctx, purchaseId, updates)
-	if err != nil {
-		slog.Error("Error updating purchase", "error", err)
-		return "", 0, err
-	}
-
-	return invoice.BotInvoiceUrl, purchaseId, nil
-}
-
-func (s PaymentService) createYookasaInvoice(ctx context.Context, amount float64, months int, customer *database.Customer) (url string, purchaseId int64, err error) {
-	purchaseId, err = s.purchaseRepository.Create(ctx, &database.Purchase{
-		InvoiceType: database.InvoiceTypeYookasa,
-		Status:      database.PurchaseStatusNew,
-		Amount:      amount,
-		Currency:    "RUB",
-		CustomerID:  customer.ID,
-		Month:       months,
-	})
-	if err != nil {
-		slog.Error("Error creating purchase", "error", err)
-		return "", 0, err
-	}
-
-	invoice, err := s.yookasaClient.CreateInvoice(ctx, int(amount), months, customer.ID, purchaseId)
-	if err != nil {
-		slog.Error("Error creating invoice", "error", err)
-		return "", 0, err
-	}
-
-	updates := map[string]interface{}{
-		"yookasa_url": invoice.Confirmation.ConfirmationURL,
-		"yookasa_id":  invoice.ID,
-		"status":      database.PurchaseStatusPending,
-	}
-
-	err = s.purchaseRepository.UpdateFields(ctx, purchaseId, updates)
-	if err != nil {
-		slog.Error("Error updating purchase", "error", err)
-		return "", 0, err
-	}
-
-	return invoice.Confirmation.ConfirmationURL, purchaseId, nil
 }
 
 func (s PaymentService) createTelegramInvoice(ctx context.Context, amount float64, months int, customer *database.Customer) (url string, purchaseId int64, err error) {
@@ -583,56 +423,9 @@ func paymentURLForPurchase(purchase *database.Purchase) string {
 	switch {
 	case purchase == nil:
 		return ""
-	case purchase.CryptoInvoiceLink != nil:
-		return *purchase.CryptoInvoiceLink
-	case purchase.YookasaURL != nil:
-		return *purchase.YookasaURL
 	case purchase.PlategaURL != nil:
 		return *purchase.PlategaURL
 	default:
 		return ""
 	}
-}
-
-func (s PaymentService) createTributeInvoice(ctx context.Context, amount float64, months int, customer *database.Customer) (url string, purchaseId int64, err error) {
-	purchaseId, err = s.purchaseRepository.Create(ctx, &database.Purchase{
-		InvoiceType: database.InvoiceTypeTribute,
-		Status:      database.PurchaseStatusPending,
-		Amount:      amount,
-		Currency:    "RUB",
-		CustomerID:  customer.ID,
-		Month:       months,
-	})
-	if err != nil {
-		slog.Error("Error creating purchase", "error", err)
-		return "", 0, err
-	}
-
-	return "", purchaseId, nil
-}
-
-func (s PaymentService) sendReceiptToMoynalog(ctx context.Context, purchase *database.Purchase) error {
-	if s.moynalogClient == nil {
-		return fmt.Errorf("moynalog client not initialized")
-	}
-
-	var monthString string
-	switch purchase.Month {
-	case 1:
-		monthString = "месяц"
-	case 3, 4:
-		monthString = "месяца"
-	default:
-		monthString = "месяцев"
-	}
-	comment := fmt.Sprintf("Подписка на %d %s", purchase.Month, monthString)
-	amount := purchase.Amount
-
-	_, err := s.moynalogClient.CreateIncome(ctx, amount, comment)
-	if err != nil {
-		return fmt.Errorf("failed to create income in Moynalog: %w", err)
-	}
-
-	slog.Info("Receipt sent to Moynalog", "purchase_id", utils.MaskHalfInt64(purchase.ID), "amount", amount, "comment", comment)
-	return nil
 }

@@ -20,9 +20,5 @@ CREATE TABLE purchase
     currency           VARCHAR(10),
     expire_at          TIMESTAMP WITH TIME ZONE,
     status             VARCHAR(20),
-    invoice_type       VARCHAR(20),
-    crypto_invoice_id  BIGINT,
-    crypto_invoice_url TEXT,
-    yookasa_url        TEXT,
-    yookasa_id         uuid
+    invoice_type       VARCHAR(20)
 );

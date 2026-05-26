@@ -108,7 +108,6 @@
   "payment_method_sbp": "СБП",
   "payment_method_crypto": "криптовалюта",
   "payment_method_stars": "Telegram Stars",
-  "payment_method_tribute": "Tribute",
   "payment_method_default": "доступные способы оплаты",
   "trial_button": {
     "text": "🎁 Попробовать бесплатно",
@@ -146,11 +145,6 @@
     "text": "🔌 Подключиться",
     "emoji_id": "5843553939672274145"
   },
-  "tribute_button": {
-    "text": "💎 Tribute",
-    "emoji_id": "5258165702707125574"
-  },
-  "tribute_cancelled": "Tribute cancelled",
   "access_denied": "⚠️ Доступ запрещён. Пожалуйста, обновите информацию профиля.",
   "info_button": {
     "text": "ℹ️ Информация",

@@ -108,7 +108,6 @@
   "payment_method_sbp": "SBP",
   "payment_method_crypto": "cryptocurrency",
   "payment_method_stars": "Telegram Stars",
-  "payment_method_tribute": "Tribute",
   "payment_method_default": "available payment methods",
   "trial_button": {
     "text": "🎁 Try free",
@@ -146,11 +145,6 @@
     "text": "🔌 Connect",
     "emoji_id": "5843553939672274145"
   },
-  "tribute_button": {
-    "text": "💎 Tribute",
-    "emoji_id": "5258165702707125574"
-  },
-  "tribute_cancelled": "Tribute cancelled",
   "access_denied": "⚠️ Access denied. Please update your profile information.",
   "info_button": {
     "text": "ℹ️ Info",

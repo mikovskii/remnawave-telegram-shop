@@ -19,10 +19,7 @@ purchase and manage subscriptions through Telegram with multiple payment system 
 
 ### Payment Systems
 
-- [YooKassa API](https://yookassa.ru/developers/api)
-- [CryptoPay API](https://help.crypt.bot/crypto-pay-api)
 - Telegram Stars
-- Tribute
 
 ## Features
 
@@ -50,7 +47,6 @@ purchase and manage subscriptions through Telegram with multiple payment system 
 Web server start on port defined in .env via HEALTH_CHECK_PORT
 
 - /healthcheck
-- /${TRIBUTE_PAYMENT_URL} - webhook for tribute
 
 ## Environment Variables
 
@@ -83,14 +79,6 @@ The application requires the following environment variables to be set:
 | `REMNAWAVE_URL`          | Remnawave API URL                                                                                                                          |
 | `REMNAWAVE_MODE`         | Remnawave mode (remote/local), default is remote. If local set – you can pass http://remnawave:3000 to REMNAWAVE_URL                       |
 | `REMNAWAVE_TOKEN`        | Authentication token for Remnawave API                                                                                                     |
-| `CRYPTO_PAY_ENABLED`     | Enable/disable CryptoPay payment method (true/false)                                                                                       |
-| `CRYPTO_PAY_TOKEN`       | CryptoPay API token                                                                                                                        |
-| `CRYPTO_PAY_URL`         | CryptoPay API URL                                                                                                                          |
-| `YOOKASA_ENABLED`        | Enable/disable YooKassa payment method (true/false)                                                                                        |
-| `YOOKASA_SECRET_KEY`     | YooKassa API secret key                                                                                                                    |
-| `YOOKASA_SHOP_ID`        | YooKassa shop identifier                                                                                                                   |
-| `YOOKASA_URL`            | YooKassa API URL                                                                                                                           |
-| `YOOKASA_EMAIL`          | Email address associated with YooKassa account                                                                                             |
 | `TRAFFIC_LIMIT`          | Maximum allowed traffic in gb (0 to set unlimited)                                                                                         |
 | `TELEGRAM_STARS_ENABLED` | Enable/disable Telegram Stars payment method (true/false)                                                                                  |
 | `REQUIRE_PAID_PURCHASE_FOR_STARS` | Require successful cryptocurrency or card payment before allowing Telegram Stars (true/false). Default: false |
@@ -110,11 +98,7 @@ The application requires the following environment variables to be set:
 | `TRIAL_EXTERNAL_SQUAD_UUID` | Single external squad UUID to assign to trial users during creation and updates (optional, if not set, regular EXTERNAL_SQUAD_UUID will be used) |
 | `SQUAD_UUIDS`            | Comma-separated list of squad UUIDs to assign to users (e.g., "773db654-a8b2-413a-a50b-75c3536238fd,bc979bdd-f1fa-4d94-8a51-38a0f518a2a2") |
 | `EXTERNAL_SQUAD_UUID`    | Single external squad UUID to assign to users during creation and updates (optional, e.g., "773db654-a8b2-413a-a50b-75c3536238fd")        |
-| `TRIBUTE_WEBHOOK_URL`    | Path for webhook handler. Example: /example (https://www.uuidgenerator.net/version4)                                                       |
-| `TRIBUTE_API_KEY`        | Api key, which can be obtained via settings in Tribute app.                                                                                |
-| `TRIBUTE_PAYMENT_URL`    | You payment url for Tribute. (Subscription telegram link)                                                                                  |
 | `TELEGRAM_PROXY_URL`     | Proxy URL for Telegram Bot API requests (optional, e.g., `socks5://host:port` or `http://host:port`)                                      |
-| `MOYNALOG_PROXY_URL`     | Proxy URL for Moy Nalog API requests (optional, e.g., `socks5://host:port` or `http://host:port`)                                         |
 
 ## User Interface
 
@@ -200,59 +184,6 @@ mv .env.sample .env
 
 ```bash
 docker compose up -d
-```
-
-## Tribute payment setup instructions
-
-> [!WARNING]
-> To integrate with Tribute, you must have a public domain (e.g., `bot.example.com`) that points to your bot server.  
-> Webhook and subscription setup will not work on a local address or IP — only via a domain with a valid SSL
-> certificate.
-
-### How the integration works
-
-The bot supports subscription management via the Tribute service. When a user clicks the payment button, they are
-redirected to the Tribute bot or payment page to complete the subscription. After successful payment, Tribute sends a
-webhook to your server, and the bot activates the subscription for the user.
-
-### Step-by-step setup guide
-
-1. Getting started
-
-* Create a channel;
-* In the Tribute app, open "Channels and Groups" and add your channel;
-* Create a new subscription;
-* Obtain the subscription link (Subscription -> Links -> Telegram Link).
-
-2. Configure environment variables in `.env`
-    * Set the webhook path (e.g., `/tribute/webhook`):
-
-    ```
-    TRIBUTE_WEBHOOK_URL=/tribute/webhook
-    ```
-
-    * Set the API key from your Tribute settings:
-
-    ```
-    TRIBUTE_API_KEY=your_tribute_api_key
-    ```
-
-    * Paste the subscription link you got from Tribute:
-
-    ```
-    TRIBUTE_PAYMENT_URL=https://t.me/tribute/app?startapp=...
-    ```
-
-    * Specify the port the app will use:
-
-    ```
-    HEALTH_CHECK_PORT=82251
-    ```
-
-3. Restart bot
-
-```bash
-docker compose down && docker compose up -d
 ```
 
 ## How to change bot messages

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	sq "github.com/Masterminds/squirrel"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 )
@@ -15,10 +14,7 @@ import (
 type InvoiceType string
 
 const (
-	InvoiceTypeCrypto           InvoiceType = "crypto"
-	InvoiceTypeYookasa          InvoiceType = "yookasa"
 	InvoiceTypeTelegram         InvoiceType = "telegram"
-	InvoiceTypeTribute          InvoiceType = "tribute"
 	InvoiceTypePlategaSBP       InvoiceType = "plt_sbp"
 	InvoiceTypePlategaCards     InvoiceType = "plt_cards"
 	InvoiceTypePlategaAcquiring InvoiceType = "plt_acq"
@@ -46,10 +42,6 @@ type Purchase struct {
 	ExpireAt            *time.Time     `db:"expire_at"`
 	Status              PurchaseStatus `db:"status"`
 	InvoiceType         InvoiceType    `db:"invoice_type"`
-	CryptoInvoiceID     *int64         `db:"crypto_invoice_id"`
-	CryptoInvoiceLink   *string        `db:"crypto_invoice_url"`
-	YookasaURL          *string        `db:"yookasa_url"`
-	YookasaID           *uuid.UUID     `db:"yookasa_id"`
 	PlategaID           *string        `db:"platega_id"`
 	PlategaURL          *string        `db:"platega_url"`
 	AbandonedClaimedAt  *time.Time     `db:"abandoned_claimed_at"`
@@ -70,10 +62,6 @@ var purchaseColumns = []string{
 	"expire_at",
 	"status",
 	"invoice_type",
-	"crypto_invoice_id",
-	"crypto_invoice_url",
-	"yookasa_url",
-	"yookasa_id",
 	"platega_id",
 	"platega_url",
 	"abandoned_claimed_at",
@@ -97,10 +85,6 @@ func scanPurchase(scanner interface {
 		&purchase.ExpireAt,
 		&purchase.Status,
 		&purchase.InvoiceType,
-		&purchase.CryptoInvoiceID,
-		&purchase.CryptoInvoiceLink,
-		&purchase.YookasaURL,
-		&purchase.YookasaID,
 		&purchase.PlategaID,
 		&purchase.PlategaURL,
 		&purchase.AbandonedClaimedAt,
@@ -123,8 +107,8 @@ func NewPurchaseRepository(pool *pgxpool.Pool) *PurchaseRepository {
 
 func (cr *PurchaseRepository) Create(ctx context.Context, purchase *Purchase) (int64, error) {
 	buildInsert := sq.Insert("purchase").
-		Columns("amount", "customer_id", "month", "currency", "expire_at", "status", "invoice_type", "crypto_invoice_id", "crypto_invoice_url", "yookasa_url", "yookasa_id", "platega_id", "platega_url").
-		Values(purchase.Amount, purchase.CustomerID, purchase.Month, purchase.Currency, purchase.ExpireAt, purchase.Status, purchase.InvoiceType, purchase.CryptoInvoiceID, purchase.CryptoInvoiceLink, purchase.YookasaURL, purchase.YookasaID, purchase.PlategaID, purchase.PlategaURL).
+		Columns("amount", "customer_id", "month", "currency", "expire_at", "status", "invoice_type", "platega_id", "platega_url").
+		Values(purchase.Amount, purchase.CustomerID, purchase.Month, purchase.Currency, purchase.ExpireAt, purchase.Status, purchase.InvoiceType, purchase.PlategaID, purchase.PlategaURL).
 		Suffix("RETURNING id").
 		PlaceholderFormat(sq.Dollar)
 
@@ -403,7 +387,6 @@ func (pr *PurchaseRepository) FindAbandonedInvoices(ctx context.Context, olderTh
 				sq.Eq{"abandoned_claimed_at": nil},
 				sq.LtOrEq{"abandoned_claimed_at": olderThan},
 			},
-			sq.NotEq{"invoice_type": InvoiceTypeTribute},
 		}).
 		OrderBy("created_at ASC").
 		PlaceholderFormat(sq.Dollar)
@@ -434,89 +417,6 @@ func (pr *PurchaseRepository) FindAbandonedInvoices(ctx context.Context, olderTh
 	return &purchases, nil
 }
 
-func buildLatestActiveTributesQuery(customerIDs []int64) sq.SelectBuilder {
-	return sq.
-		Select(purchaseColumns...).
-		From("purchase").
-		Where(sq.And{
-			sq.Eq{"invoice_type": InvoiceTypeTribute},
-			sq.Eq{"customer_id": customerIDs},
-			sq.Expr("created_at = (SELECT MAX(created_at) FROM purchase p2 WHERE p2.customer_id = purchase.customer_id AND p2.invoice_type = ?)", InvoiceTypeTribute),
-		}).
-		Where(sq.NotEq{"status": PurchaseStatusCancel})
-}
-
-func (pr *PurchaseRepository) FindLatestActiveTributesByCustomerIDs(
-	ctx context.Context,
-	customerIDs []int64,
-) (*[]Purchase, error) {
-	if len(customerIDs) == 0 {
-		empty := make([]Purchase, 0)
-		return &empty, nil
-	}
-
-	builder := buildLatestActiveTributesQuery(customerIDs).PlaceholderFormat(sq.Dollar)
-
-	sql, args, err := builder.ToSql()
-	if err != nil {
-		return nil, fmt.Errorf("build query: %w", err)
-	}
-
-	rows, err := pr.pool.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query purchases: %w", err)
-	}
-	defer rows.Close()
-
-	var purchases []Purchase
-	for rows.Next() {
-		var p Purchase
-		if err := scanPurchase(rows, &p); err != nil {
-			return nil, fmt.Errorf("scan purchase: %w", err)
-		}
-		purchases = append(purchases, p)
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate rows: %w", err)
-	}
-
-	return &purchases, nil
-}
-
-func (pr *PurchaseRepository) FindByCustomerIDAndInvoiceTypeLast(
-	ctx context.Context,
-	customerID int64,
-	invoiceType InvoiceType,
-) (*Purchase, error) {
-
-	query := sq.Select(purchaseColumns...).
-		From("purchase").
-		Where(sq.And{
-			sq.Eq{"customer_id": customerID},
-			sq.Eq{"invoice_type": invoiceType},
-		}).
-		OrderBy("created_at DESC").
-		Limit(1).
-		PlaceholderFormat(sq.Dollar)
-
-	sql, args, err := query.ToSql()
-	if err != nil {
-		return nil, fmt.Errorf("build query: %w", err)
-	}
-
-	p := &Purchase{}
-	err = scanPurchase(pr.pool.QueryRow(ctx, sql, args...), p)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("query purchase: %w", err)
-	}
-
-	return p, nil
-}
-
 func (pr *PurchaseRepository) FindSuccessfulPaidPurchaseByCustomer(ctx context.Context, customerID int64) (*Purchase, error) {
 	query := sq.Select(purchaseColumns...).
 		From("purchase").
@@ -524,8 +424,6 @@ func (pr *PurchaseRepository) FindSuccessfulPaidPurchaseByCustomer(ctx context.C
 			sq.Eq{"customer_id": customerID},
 			sq.Eq{"status": PurchaseStatusPaid},
 			sq.Or{
-				sq.Eq{"invoice_type": InvoiceTypeCrypto},
-				sq.Eq{"invoice_type": InvoiceTypeYookasa},
 				sq.Eq{"invoice_type": InvoiceTypePlategaSBP},
 				sq.Eq{"invoice_type": InvoiceTypePlategaCards},
 				sq.Eq{"invoice_type": InvoiceTypePlategaAcquiring},

@@ -150,10 +150,6 @@ func (s *InvoiceService) sendInvoiceNotification(ctx context.Context, customer d
 
 func invoicePaymentURL(purchase database.Purchase) string {
 	switch {
-	case purchase.CryptoInvoiceLink != nil:
-		return *purchase.CryptoInvoiceLink
-	case purchase.YookasaURL != nil:
-		return *purchase.YookasaURL
 	case purchase.PlategaURL != nil:
 		return *purchase.PlategaURL
 	default:

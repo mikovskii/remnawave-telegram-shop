@@ -16,15 +16,6 @@ type customerRepository interface {
 	FindByExpirationRange(ctx context.Context, startDate, endDate time.Time) (*[]database.Customer, error)
 }
 
-type tributeRepository interface {
-	FindLatestActiveTributesByCustomerIDs(ctx context.Context, customerIDs []int64) (*[]database.Purchase, error)
-}
-
-type paymentProcessor interface {
-	CreatePurchase(ctx context.Context, amount float64, months int, customer *database.Customer, invoiceType database.InvoiceType) (string, int64, error)
-	ProcessPurchaseById(ctx context.Context, purchaseId int64) error
-}
-
 type notificationLogger interface {
 	Claim(ctx context.Context, customerID int64, notificationType string, dedupeKey string, metadata map[string]interface{}) (bool, error)
 	MarkSent(ctx context.Context, customerID int64, notificationType string, dedupeKey string) error
@@ -33,8 +24,6 @@ type notificationLogger interface {
 
 type SubscriptionService struct {
 	customerRepository customerRepository
-	purchaseRepository tributeRepository
-	paymentService     paymentProcessor
 	notificationLogger notificationLogger
 	telegramBot        *bot.Bot
 	tm                 *translation.Manager
@@ -42,12 +31,10 @@ type SubscriptionService struct {
 }
 
 func NewSubscriptionService(customerRepository customerRepository,
-	purchaseRepository tributeRepository,
-	paymentService paymentProcessor,
 	notificationLogger notificationLogger,
 	telegramBot *bot.Bot,
 	tm *translation.Manager) *SubscriptionService {
-	svc := &SubscriptionService{customerRepository: customerRepository, purchaseRepository: purchaseRepository, paymentService: paymentService, notificationLogger: notificationLogger, telegramBot: telegramBot, tm: tm}
+	svc := &SubscriptionService{customerRepository: customerRepository, notificationLogger: notificationLogger, telegramBot: telegramBot, tm: tm}
 	svc.notify = svc.sendNotification
 	return svc
 }
@@ -65,49 +52,9 @@ func (s *SubscriptionService) ProcessSubscriptionExpiration() error {
 	}
 	now := time.Now()
 
-	customersIds := make([]int64, len(*customers))
-	for i, customer := range *customers {
-		customersIds[i] = customer.ID
-	}
-
-	latestActiveTributes, err := s.purchaseRepository.FindLatestActiveTributesByCustomerIDs(ctx, customersIds)
-	if err != nil {
-		slog.Error("Failed to query tribute purchases", "error", err)
-		return err
-	}
-
-	customerIdTributes := make(map[int64]*database.Purchase, len(*latestActiveTributes))
-	for i := range *latestActiveTributes {
-		p := &(*latestActiveTributes)[i]
-		customerIdTributes[p.CustomerID] = p
-	}
-
-	tributesProcessed := make(map[int64]bool, len(*latestActiveTributes))
-
 	for _, customer := range *customers {
 		daysUntilExpiration := s.getDaysUntilExpiration(now, *customer.ExpireAt)
 
-		if p, ok := customerIdTributes[customer.ID]; ok {
-			if daysUntilExpiration != 1 {
-				continue
-			}
-			_, purchaseId, err := s.paymentService.CreatePurchase(ctx, p.Amount, p.Month, &customer, database.InvoiceTypeTribute)
-			if err != nil {
-				slog.Error("Failed to create tribute purchase", "error", err)
-				continue
-			}
-
-			err = s.paymentService.ProcessPurchaseById(ctx, purchaseId)
-			if err != nil {
-				slog.Error("Failed to process tribute purchase", "error", err)
-				continue
-			}
-			slog.Info("Tribute purchase processed successfully", "purchase_id", purchaseId)
-			tributesProcessed[customer.ID] = true
-		}
-		if _, ok := tributesProcessed[customer.ID]; ok {
-			continue
-		}
 		if !shouldSendRenewalNotification(daysUntilExpiration) {
 			continue
 		}
@@ -159,8 +106,7 @@ func (s *SubscriptionService) ProcessSubscriptionExpiration() error {
 			"days_until_expiration", daysUntilExpiration)
 	}
 
-	slog.Info(fmt.Sprintf("Processed tributes customers %d with expiring subscriptions", len(tributesProcessed)))
-	slog.Info(fmt.Sprintf("Sent notifications to %d customers with expiring subscriptions", len(*customers)-len(tributesProcessed)))
+	slog.Info(fmt.Sprintf("Sent notifications to customers with expiring subscriptions"))
 	return nil
 }
 

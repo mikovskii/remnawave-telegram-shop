@@ -267,20 +267,17 @@ func (h Handler) hasActiveSubscription(customer *database.Customer) bool {
 
 func (h Handler) buildPaymentMethodsText(langCode string) string {
 	var methods []string
-	if config.IsYookasaEnabled() || config.IsPlategaCardsEnabled() || config.IsPlategaAcquiringEnabled() || config.IsPlategaWorldwideEnabled() {
+	if config.IsPlategaCardsEnabled() || config.IsPlategaAcquiringEnabled() || config.IsPlategaWorldwideEnabled() {
 		methods = append(methods, h.translation.GetText(langCode, "payment_method_cards"))
 	}
 	if config.IsPlategaSBPEnabled() {
 		methods = append(methods, h.translation.GetText(langCode, "payment_method_sbp"))
 	}
-	if config.IsCryptoPayEnabled() || config.IsPlategaCryptoEnabled() {
+	if config.IsPlategaCryptoEnabled() {
 		methods = append(methods, h.translation.GetText(langCode, "payment_method_crypto"))
 	}
 	if config.IsTelegramStarsEnabled() {
 		methods = append(methods, h.translation.GetText(langCode, "payment_method_stars"))
-	}
-	if config.GetTributePaymentUrl() != "" {
-		methods = append(methods, h.translation.GetText(langCode, "payment_method_tribute"))
 	}
 	if len(methods) == 0 {
 		return h.translation.GetText(langCode, "payment_method_default")

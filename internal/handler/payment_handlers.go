@@ -95,18 +95,6 @@ func (h Handler) SellCallbackHandler(ctx context.Context, b *bot.Bot, update *mo
 
 	var keyboard [][]models.InlineKeyboardButton
 
-	if config.IsCryptoPayEnabled() {
-		keyboard = append(keyboard, []models.InlineKeyboardButton{
-			h.translation.GetButton(langCode, "crypto_button").InlineCallback(fmt.Sprintf("%s?month=%s&invoiceType=%s&amount=%s", CallbackPayment, month, database.InvoiceTypeCrypto, amount)),
-		})
-	}
-
-	if config.IsYookasaEnabled() {
-		keyboard = append(keyboard, []models.InlineKeyboardButton{
-			h.translation.GetButton(langCode, "card_button").InlineCallback(fmt.Sprintf("%s?month=%s&invoiceType=%s&amount=%s", CallbackPayment, month, database.InvoiceTypeYookasa, amount)),
-		})
-	}
-
 	if config.IsPlategaSBPEnabled() {
 		keyboard = append(keyboard, []models.InlineKeyboardButton{
 			h.translation.GetButton(langCode, "platega_sbp_button").InlineCallback(fmt.Sprintf("%s?month=%s&invoiceType=%s&amount=%s", CallbackPayment, month, database.InvoiceTypePlategaSBP, amount)),
@@ -163,12 +151,6 @@ func (h Handler) SellCallbackHandler(ctx context.Context, b *bot.Bot, update *mo
 				h.translation.GetButton(langCode, "stars_button").InlineCallback(fmt.Sprintf("%s?month=%s&invoiceType=%s&amount=%s", CallbackPayment, month, database.InvoiceTypeTelegram, amount)),
 			})
 		}
-	}
-
-	if config.GetTributeWebHookUrl() != "" {
-		keyboard = append(keyboard, []models.InlineKeyboardButton{
-			h.translation.GetButton(langCode, "tribute_button").InlineURL(config.GetTributePaymentUrl()),
-		})
 	}
 
 	keyboard = append(keyboard, []models.InlineKeyboardButton{

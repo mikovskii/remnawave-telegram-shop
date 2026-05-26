@@ -19,10 +19,7 @@ type config struct {
 	remnawaveUrl, remnawaveToken, remnawaveMode, remnawaveTag string
 	defaultLanguage                                           string
 	databaseURL                                               string
-	cryptoPayURL, cryptoPayToken                              string
 	botURL                                                    string
-	yookasaURL, yookasaShopId, yookasaSecretKey, yookasaEmail string
-	moynalogURL, moynalogUsername, moynalogPassword           string
 	trafficLimit, trialTrafficLimit                           int
 	feedbackURL                                               string
 	channelURL                                                string
@@ -30,10 +27,7 @@ type config struct {
 	supportURL                                                string
 	tosURL                                                    string
 	privacyURL                                                string
-	isYookasaEnabled                                          bool
-	isCryptoEnabled                                           bool
 	isTelegramStarsEnabled                                    bool
-	isMoynalogEnabled                                         bool
 	adminTelegramId                                           int64
 	trialDays                                                 int
 	trialRemnawaveTag                                         string
@@ -42,12 +36,10 @@ type config struct {
 	miniApp                                                   string
 	enableAutoPayment                                         bool
 	healthCheckPort                                           int
-	tributeWebhookUrl, tributeAPIKey, tributePaymentUrl       string
-	yookasaWebhookUrl                                         string
 	plategaMerchantId, plategaSecret, plategaWebhookUrl       string
-	isPlategaSBPEnabled, isPlategaCardsEnabled               bool
-	isPlategaAcquiringEnabled, isPlategaWorldwideEnabled     bool
-	isPlategaCryptoEnabled                                   bool
+	isPlategaSBPEnabled, isPlategaCardsEnabled                bool
+	isPlategaAcquiringEnabled, isPlategaWorldwideEnabled      bool
+	isPlategaCryptoEnabled                                    bool
 	isWebAppLinkEnabled                                       bool
 	daysInMonth                                               int
 	externalSquadUUID                                         uuid.UUID
@@ -77,21 +69,6 @@ func TrialRemnawaveTag() string {
 func DefaultLanguage() string {
 	return conf.defaultLanguage
 }
-func GetTributeWebHookUrl() string {
-	return conf.tributeWebhookUrl
-}
-func GetTributeAPIKey() string {
-	return conf.tributeAPIKey
-}
-
-func GetTributePaymentUrl() string {
-	return conf.tributePaymentUrl
-}
-
-func GetYookasaWebHookUrl() string {
-	return conf.yookasaWebhookUrl
-}
-
 func PlategaMerchantId() string {
 	return conf.plategaMerchantId
 }
@@ -195,10 +172,6 @@ func PrivacyURL() string {
 	return conf.privacyURL
 }
 
-func YookasaEmail() string {
-	return conf.yookasaEmail
-}
-
 func Price1() int {
 	return conf.price1
 }
@@ -260,9 +233,6 @@ func TelegramProxyURL() string {
 	return envStringDefault("TELEGRAM_PROXY_URL", "")
 }
 
-func MoynalogProxyURL() string {
-	return envStringDefault("MOYNALOG_PROXY_URL", "")
-}
 func RemnawaveUrl() string {
 	return conf.remnawaveUrl
 }
@@ -275,37 +245,14 @@ func RemnawaveToken() string {
 func RemnawaveMode() string {
 	return conf.remnawaveMode
 }
-func CryptoPayUrl() string {
-	return conf.cryptoPayURL
-}
-func CryptoPayToken() string {
-	return conf.cryptoPayToken
-}
 func BotURL() string {
 	return conf.botURL
 }
 func SetBotURL(botURL string) {
 	conf.botURL = botURL
 }
-func YookasaUrl() string {
-	return conf.yookasaURL
-}
-func YookasaShopId() string {
-	return conf.yookasaShopId
-}
-func YookasaSecretKey() string {
-	return conf.yookasaSecretKey
-}
 func TrafficLimit() int {
 	return conf.trafficLimit * bytesInGigabyte
-}
-
-func IsCryptoPayEnabled() bool {
-	return conf.isCryptoEnabled
-}
-
-func IsYookasaEnabled() bool {
-	return conf.isYookasaEnabled
 }
 
 func IsTelegramStarsEnabled() bool {
@@ -341,22 +288,6 @@ func TrafficLimitResetStrategy() string {
 }
 
 const bytesInGigabyte = 1073741824
-
-func MoynalogUrl() string {
-	return conf.moynalogURL
-}
-
-func MoynalogUsername() string {
-	return conf.moynalogUsername
-}
-
-func MoynalogPassword() string {
-	return conf.moynalogPassword
-}
-
-func IsMoynalogEnabled() bool {
-	return conf.isMoynalogEnabled
-}
 
 func mustEnv(key string) string {
 	v := os.Getenv(key)
@@ -485,21 +416,6 @@ func InitConfig() {
 
 	conf.databaseURL = mustEnv("DATABASE_URL")
 
-	conf.isCryptoEnabled = envBool("CRYPTO_PAY_ENABLED")
-	if conf.isCryptoEnabled {
-		conf.cryptoPayURL = mustEnv("CRYPTO_PAY_URL")
-		conf.cryptoPayToken = mustEnv("CRYPTO_PAY_TOKEN")
-	}
-
-	conf.isYookasaEnabled = envBool("YOOKASA_ENABLED")
-	if conf.isYookasaEnabled {
-		conf.yookasaURL = mustEnv("YOOKASA_URL")
-		conf.yookasaShopId = mustEnv("YOOKASA_SHOP_ID")
-		conf.yookasaSecretKey = mustEnv("YOOKASA_SECRET_KEY")
-		conf.yookasaEmail = mustEnv("YOOKASA_EMAIL")
-		conf.yookasaWebhookUrl = os.Getenv("YOOKASA_WEBHOOK_URL")
-	}
-
 	if envBool("PLATEGA_ENABLED") {
 		conf.plategaMerchantId = mustEnv("PLATEGA_MERCHANT_ID")
 		conf.plategaSecret = mustEnv("PLATEGA_SECRET")
@@ -540,12 +456,6 @@ func InitConfig() {
 			return map[uuid.UUID]uuid.UUID{}
 		}
 	}()
-
-	conf.tributeWebhookUrl = os.Getenv("TRIBUTE_WEBHOOK_URL")
-	if conf.tributeWebhookUrl != "" {
-		conf.tributeAPIKey = mustEnv("TRIBUTE_API_KEY")
-		conf.tributePaymentUrl = mustEnv("TRIBUTE_PAYMENT_URL")
-	}
 
 	conf.blockedTelegramIds = func() map[int64]bool {
 		v := os.Getenv("BLOCKED_TELEGRAM_IDS")
@@ -643,10 +553,4 @@ func InitConfig() {
 		return map[string]string{}
 	}()
 
-	conf.isMoynalogEnabled = envBool("MOYNALOG_ENABLED")
-	if conf.isMoynalogEnabled {
-		conf.moynalogURL = envStringDefault("MOYNALOG_URL", "https://moynalog.ru/api/v1")
-		conf.moynalogUsername = mustEnv("MOYNALOG_USERNAME")
-		conf.moynalogPassword = mustEnv("MOYNALOG_PASSWORD")
-	}
 }

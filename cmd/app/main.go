@@ -11,20 +11,14 @@ import (
 	"os/signal"
 	"remnawave-tg-shop-bot/internal/cache"
 	"remnawave-tg-shop-bot/internal/config"
-	"remnawave-tg-shop-bot/internal/cryptopay"
 	"remnawave-tg-shop-bot/internal/database"
 	"remnawave-tg-shop-bot/internal/handler"
-	"remnawave-tg-shop-bot/internal/moynalog"
 	"remnawave-tg-shop-bot/internal/notification"
 	"remnawave-tg-shop-bot/internal/payment"
 	"remnawave-tg-shop-bot/internal/platega"
 	"remnawave-tg-shop-bot/internal/remnawave"
 	"remnawave-tg-shop-bot/internal/sync"
 	"remnawave-tg-shop-bot/internal/translation"
-	"remnawave-tg-shop-bot/internal/tribute"
-	"remnawave-tg-shop-bot/internal/yookasa"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -45,18 +39,6 @@ func main() {
 
 	config.InitConfig()
 	slog.Info("Application starting", "version", Version, "commit", Commit, "buildDate", BuildDate)
-
-	// Check if Moynalog is enabled
-	var moynalogClient *moynalog.Client
-	if config.IsMoynalogEnabled() {
-		var err error
-		moynalogClient, err = moynalog.NewClient(config.MoynalogUrl(), config.MoynalogUsername(), config.MoynalogPassword(), config.MoynalogProxyURL())
-		if err != nil {
-			log.Fatalf("Moynalog initialization error: %v", err)
-		}
-
-		slog.Info("Moynalog authentication successful")
-	}
 
 	tm := translation.GetInstance()
 	err := tm.InitTranslations("./translations", config.DefaultLanguage())
@@ -81,9 +63,7 @@ func main() {
 	periodRepository := database.NewSubscriptionPeriodRepository(pool)
 	notificationLogRepository := database.NewNotificationLogRepository(pool)
 
-	cryptoPayClient := cryptopay.NewCryptoPayClient(config.CryptoPayUrl(), config.CryptoPayToken())
 	remnawaveClient := remnawave.NewClient(config.RemnawaveUrl(), config.RemnawaveToken(), config.RemnawaveMode())
-	yookasaClient := yookasa.NewClient(config.YookasaUrl(), config.YookasaShopId(), config.YookasaSecretKey())
 	plategaClient := platega.NewClient(config.PlategaMerchantId(), config.PlategaSecret())
 	botOpts := []bot.Option{bot.WithWorkers(3)}
 	if proxyStr := config.TelegramProxyURL(); proxyStr != "" {
@@ -103,15 +83,9 @@ func main() {
 		panic(err)
 	}
 
-	paymentService := payment.NewPaymentService(tm, purchaseRepository, remnawaveClient, customerRepository, b, cryptoPayClient, yookasaClient, plategaClient, referralRepository, botEventRepository, periodRepository, cache, moynalogClient)
+	paymentService := payment.NewPaymentService(tm, purchaseRepository, remnawaveClient, customerRepository, b, plategaClient, referralRepository, botEventRepository, periodRepository, cache)
 
-	cronScheduler := setupInvoiceChecker(purchaseRepository, cryptoPayClient, paymentService)
-	if cronScheduler != nil {
-		cronScheduler.Start()
-		defer cronScheduler.Stop()
-	}
-
-	subService := notification.NewSubscriptionService(customerRepository, purchaseRepository, paymentService, notificationLogRepository, b, tm)
+	subService := notification.NewSubscriptionService(customerRepository, notificationLogRepository, b, tm)
 
 	subscriptionNotificationCronScheduler := subscriptionChecker(subService)
 	subscriptionNotificationCronScheduler.Start()
@@ -124,7 +98,7 @@ func main() {
 
 	syncService := sync.NewSyncService(remnawaveClient, customerRepository)
 
-	h := handler.NewHandler(syncService, paymentService, tm, customerRepository, purchaseRepository, cryptoPayClient, yookasaClient, referralRepository, botEventRepository, cache)
+	h := handler.NewHandler(syncService, paymentService, tm, customerRepository, purchaseRepository, referralRepository, botEventRepository, cache)
 
 	me, err := b.GetMe(ctx)
 	if err != nil {
@@ -181,14 +155,6 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/healthcheck", fullHealthHandler(pool, remnawaveClient))
-	if config.GetTributeWebHookUrl() != "" {
-		tributeHandler := tribute.NewClient(paymentService, customerRepository)
-		mux.Handle(config.GetTributeWebHookUrl(), tributeHandler.WebHookHandler())
-	}
-	if config.IsYookasaEnabled() && config.GetYookasaWebHookUrl() != "" {
-		yookasaWebhook := yookasa.NewWebhookHandler(yookasaClient, paymentService, purchaseRepository)
-		mux.Handle(config.GetYookasaWebHookUrl(), yookasaWebhook)
-	}
 	if config.IsPlategaEnabled() && config.GetPlategaWebHookUrl() != "" {
 		plategaWebhook := platega.NewWebhookHandler(purchaseRepository, paymentService, config.PlategaMerchantId(), config.PlategaSecret())
 		mux.Handle(config.GetPlategaWebHookUrl(), plategaWebhook)
@@ -305,92 +271,4 @@ func initDatabase(ctx context.Context, connString string) (*pgxpool.Pool, error)
 	config.MinConns = 5
 
 	return pgxpool.ConnectConfig(ctx, config)
-}
-
-func setupInvoiceChecker(
-	purchaseRepository *database.PurchaseRepository,
-	cryptoPayClient *cryptopay.Client,
-	paymentService *payment.PaymentService) *cron.Cron {
-	if !config.IsCryptoPayEnabled() {
-		return nil
-	}
-	c := cron.New(cron.WithSeconds())
-
-	_, err := c.AddFunc("*/5 * * * * *", func() {
-		ctx := context.Background()
-		checkCryptoPayInvoice(ctx, purchaseRepository, cryptoPayClient, paymentService)
-	})
-
-	if err != nil {
-		panic(err)
-	}
-
-	return c
-}
-
-func checkCryptoPayInvoice(
-	ctx context.Context,
-	purchaseRepository *database.PurchaseRepository,
-	cryptoPayClient *cryptopay.Client,
-	paymentService *payment.PaymentService,
-) {
-	pendingPurchases, err := purchaseRepository.FindByInvoiceTypeAndStatus(
-		ctx,
-		database.InvoiceTypeCrypto,
-		database.PurchaseStatusPending,
-	)
-	if err != nil {
-		log.Printf("Error finding pending purchases: %v", err)
-		return
-	}
-	if len(*pendingPurchases) == 0 {
-		return
-	}
-
-	var invoiceIDs []string
-
-	for _, purchase := range *pendingPurchases {
-		if purchase.CryptoInvoiceID != nil {
-			invoiceIDs = append(invoiceIDs, fmt.Sprintf("%d", *purchase.CryptoInvoiceID))
-		}
-	}
-
-	if len(invoiceIDs) == 0 {
-		return
-	}
-
-	stringInvoiceIDs := strings.Join(invoiceIDs, ",")
-	invoices, err := cryptoPayClient.GetInvoices("", "", "", stringInvoiceIDs, 0, 0)
-	if err != nil {
-		log.Printf("Error getting invoices: %v", err)
-		return
-	}
-
-	for _, invoice := range *invoices {
-		if invoice.InvoiceID != nil && invoice.IsPaid() {
-			payload := strings.Split(invoice.Payload, "&")
-			purchaseID, err := strconv.Atoi(strings.Split(payload[0], "=")[1])
-			username := strings.Split(payload[1], "=")[1]
-			ctxWithUsername := context.WithValue(ctx, remnawave.CtxKeyUsername, username)
-			err = paymentService.ProcessPurchaseById(ctxWithUsername, int64(purchaseID))
-			if err != nil {
-				slog.Error("Error processing invoice", "invoiceId", invoice.InvoiceID, "error", err)
-			} else {
-				slog.Info("Invoice processed", "invoiceId", invoice.InvoiceID, "purchaseId", purchaseID)
-			}
-
-		}
-		if invoice.InvoiceID != nil && invoice.IsFailed() {
-			payload := strings.Split(invoice.Payload, "&")
-			purchaseID, err := strconv.Atoi(strings.Split(payload[0], "=")[1])
-			if err != nil {
-				slog.Error("Error parsing failed invoice payload", "invoiceId", invoice.InvoiceID, "error", err)
-				continue
-			}
-			if err := paymentService.CancelPayment(ctx, int64(purchaseID)); err != nil {
-				slog.Error("Error canceling failed invoice", "invoiceId", invoice.InvoiceID, "error", err)
-			}
-		}
-	}
-
 }
