@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_subscription_period_paid_purchase_unique;

@@ -97,7 +97,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if purchase.Status == database.PurchaseStatusPaid || purchase.Status == database.PurchaseStatusCancel {
+	if purchase.Status == database.PurchaseStatusCancel || purchase.FulfilledAt != nil {
 		slog.Info("platega webhook: purchase already finalized", "purchase_id", purchaseID, "status", purchase.Status)
 		w.WriteHeader(http.StatusOK)
 		return

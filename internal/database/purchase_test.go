@@ -51,3 +51,32 @@ func TestBuildClaimFailedNotificationQueryRequiresUnsetNotificationAndRetryableC
 		t.Fatalf("unexpected args, want timestamp followed by %v, got %v", expectedWhereArgs, args)
 	}
 }
+
+func TestBuildMarkFulfilledQueryRequiresPaidAndUnfulfilled(t *testing.T) {
+	builder := buildMarkFulfilledQuery(42)
+	sql, args, err := builder.ToSql()
+	if err != nil {
+		t.Fatalf("ToSql() returned error: %v", err)
+	}
+
+	if !strings.Contains(sql, "status =") {
+		t.Fatalf("expected SQL to require paid status, got: %s", sql)
+	}
+	if !strings.Contains(sql, "fulfilled_at IS NULL") {
+		t.Fatalf("expected SQL to require unfulfilled purchase, got: %s", sql)
+	}
+
+	expectedWhereArgs := []interface{}{int64(42), PurchaseStatusPaid}
+	if len(args) != 3 || !reflect.DeepEqual(args[1:], expectedWhereArgs) {
+		t.Fatalf("unexpected args, want timestamp followed by %v, got %v", expectedWhereArgs, args)
+	}
+}
+
+func TestPurchaseFulfillmentLockKeyIsNamespaced(t *testing.T) {
+	if purchaseFulfillmentLockKey(42) == 42 {
+		t.Fatal("expected fulfillment advisory lock key to be namespaced")
+	}
+	if purchaseFulfillmentLockKey(42) == purchaseFulfillmentLockKey(43) {
+		t.Fatal("expected fulfillment advisory lock keys to differ by purchase")
+	}
+}

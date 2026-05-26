@@ -255,6 +255,32 @@ func (r *Client) CreateOrUpdateUser(ctx context.Context, customerId int64, teleg
 	return r.updateUser(ctx, existingUser, trafficLimit, days)
 }
 
+func (r *Client) CalculatePaidExpireAt(ctx context.Context, telegramId int64, days int) (time.Time, error) {
+	users, err := r.getUsersByTelegramID(ctx, telegramId)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if len(users) == 0 {
+		return time.Now().UTC().AddDate(0, 0, days), nil
+	}
+
+	existingUser := findUserBySuffix(users, telegramId)
+	return getNewExpire(days, existingUser.ExpireAt), nil
+}
+
+func (r *Client) CreateOrUpdateUserWithExpireAt(ctx context.Context, customerId int64, telegramId int64, trafficLimit int, expireAt time.Time, isTrialUser bool) (*User, error) {
+	users, err := r.getUsersByTelegramID(ctx, telegramId)
+	if err != nil {
+		return nil, err
+	}
+	if len(users) == 0 {
+		return r.createUserWithExpireAt(ctx, customerId, telegramId, trafficLimit, expireAt, isTrialUser)
+	}
+
+	existingUser := findUserBySuffix(users, telegramId)
+	return r.updateUserWithExpireAt(ctx, existingUser, trafficLimit, expireAt)
+}
+
 func (r *Client) GetUserByTelegramID(ctx context.Context, telegramID int64) (*User, error) {
 	users, err := r.getUsersByTelegramID(ctx, telegramID)
 	if err != nil {
@@ -291,7 +317,10 @@ func UsernameFromCtx(ctx context.Context) string {
 
 func (r *Client) updateUser(ctx context.Context, existingUser *User, trafficLimit int, days int) (*User, error) {
 	newExpire := getNewExpire(days, existingUser.ExpireAt)
+	return r.updateUserWithExpireAt(ctx, existingUser, trafficLimit, newExpire)
+}
 
+func (r *Client) updateUserWithExpireAt(ctx context.Context, existingUser *User, trafficLimit int, expireAt time.Time) (*User, error) {
 	squads, err := r.getInternalSquads(ctx)
 	if err != nil {
 		return nil, err
@@ -302,7 +331,7 @@ func (r *Client) updateUser(ctx context.Context, existingUser *User, trafficLimi
 
 	userUpdate := &UpdateUserRequest{
 		UUID:                 &existingUser.UUID,
-		ExpireAt:             &newExpire,
+		ExpireAt:             &expireAt,
 		Status:               "ACTIVE",
 		TrafficLimitBytes:    &trafficLimit,
 		ActiveInternalSquads: squadIds,
@@ -333,12 +362,16 @@ func (r *Client) updateUser(ctx context.Context, existingUser *User, trafficLimi
 	if existingUser.TelegramID != nil {
 		tgid = strconv.FormatInt(*existingUser.TelegramID, 10)
 	}
-	slog.Info("updated user", "telegramId", utils.MaskHalf(tgid), "username", utils.MaskHalf(username), "days", days)
+	slog.Info("updated user", "telegramId", utils.MaskHalf(tgid), "username", utils.MaskHalf(username), "expire_at", expireAt)
 	return &resp.Response, nil
 }
 
 func (r *Client) createUser(ctx context.Context, customerId int64, telegramId int64, trafficLimit int, days int, isTrialUser bool) (*User, error) {
 	expireAt := time.Now().UTC().AddDate(0, 0, days)
+	return r.createUserWithExpireAt(ctx, customerId, telegramId, trafficLimit, expireAt, isTrialUser)
+}
+
+func (r *Client) createUserWithExpireAt(ctx context.Context, customerId int64, telegramId int64, trafficLimit int, expireAt time.Time, isTrialUser bool) (*User, error) {
 	username := generateUsername(customerId, telegramId)
 
 	squads, err := r.getInternalSquads(ctx)
@@ -392,7 +425,7 @@ func (r *Client) createUser(ctx context.Context, customerId int64, telegramId in
 	if err := r.doJSON(ctx, http.MethodPost, "/api/users", createReq, &resp); err != nil {
 		return nil, err
 	}
-	slog.Info("created user", "telegramId", utils.MaskHalf(strconv.FormatInt(telegramId, 10)), "username", utils.MaskHalf(tgUsername), "days", days)
+	slog.Info("created user", "telegramId", utils.MaskHalf(strconv.FormatInt(telegramId, 10)), "username", utils.MaskHalf(tgUsername), "expire_at", expireAt)
 	return &resp.Response, nil
 }
 

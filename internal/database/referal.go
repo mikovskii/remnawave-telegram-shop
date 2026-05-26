@@ -150,25 +150,25 @@ func (r *ReferralRepository) FindByReferee(ctx context.Context, refereeID int64)
 	return &ref, nil
 }
 
-func (r *ReferralRepository) MarkBonusGranted(ctx context.Context, referralID int64, earnedDays int) error {
+func (r *ReferralRepository) MarkBonusGranted(ctx context.Context, referralID int64, earnedDays int) (bool, error) {
 	query := sq.Update("referral").
 		Set("bonus_granted", true).
 		Set("paid_at", sq.Expr("NOW()")).
 		Set("earned_days", earnedDays).
-		Where(sq.Eq{"id": referralID}).
+		Where(sq.And{
+			sq.Eq{"id": referralID},
+			sq.Eq{"bonus_granted": false},
+		}).
 		PlaceholderFormat(sq.Dollar)
 
 	sql, args, err := query.ToSql()
 	if err != nil {
-		return fmt.Errorf("failed to build update bonus_granted query: %w", err)
+		return false, fmt.Errorf("failed to build update bonus_granted query: %w", err)
 	}
 
 	res, err := r.pool.Exec(ctx, sql, args...)
 	if err != nil {
-		return fmt.Errorf("failed to execute update bonus_granted: %w", err)
+		return false, fmt.Errorf("failed to execute update bonus_granted: %w", err)
 	}
-	if res.RowsAffected() == 0 {
-		return errors.New("no referral record updated")
-	}
-	return nil
+	return res.RowsAffected() > 0, nil
 }

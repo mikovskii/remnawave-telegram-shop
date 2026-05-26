@@ -244,22 +244,60 @@ func (pr *PurchaseRepository) MarkAsPaid(ctx context.Context, purchaseID int64, 
 	return result.RowsAffected() > 0, nil
 }
 
-func (pr *PurchaseRepository) MarkFulfilled(ctx context.Context, purchaseID int64) error {
-	query := sq.Update("purchase").
-		Set("fulfilled_at", time.Now()).
-		Where(sq.Eq{"id": purchaseID}).
-		PlaceholderFormat(sq.Dollar)
+func (pr *PurchaseRepository) WithFulfillmentLock(ctx context.Context, purchaseID int64, fn func(context.Context) error) (fnErr error) {
+	conn, err := pr.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire purchase fulfillment lock connection: %w", err)
+	}
+	defer conn.Release()
+
+	lockKey := purchaseFulfillmentLockKey(purchaseID)
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
+		return fmt.Errorf("acquire purchase fulfillment lock: %w", err)
+	}
+
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", lockKey); err != nil && fnErr == nil {
+			fnErr = fmt.Errorf("release purchase fulfillment lock: %w", err)
+		}
+	}()
+
+	fnErr = fn(ctx)
+	return
+}
+
+func purchaseFulfillmentLockKey(purchaseID int64) int64 {
+	const namespace int64 = 0x52545350
+	return namespace<<32 ^ purchaseID
+}
+
+func (pr *PurchaseRepository) MarkFulfilled(ctx context.Context, purchaseID int64) (bool, error) {
+	query := buildMarkFulfilledQuery(purchaseID)
 
 	sql, args, err := query.ToSql()
 	if err != nil {
-		return fmt.Errorf("failed to build mark fulfilled query: %w", err)
+		return false, fmt.Errorf("failed to build mark fulfilled query: %w", err)
 	}
 
-	if _, err := pr.pool.Exec(ctx, sql, args...); err != nil {
-		return fmt.Errorf("failed to mark purchase fulfilled: %w", err)
+	result, err := pr.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to mark purchase fulfilled: %w", err)
 	}
 
-	return nil
+	return result.RowsAffected() > 0, nil
+}
+
+func buildMarkFulfilledQuery(purchaseID int64) sq.UpdateBuilder {
+	return sq.Update("purchase").
+		Set("fulfilled_at", time.Now()).
+		Where(sq.And{
+			sq.Eq{"id": purchaseID},
+			sq.Eq{"status": PurchaseStatusPaid},
+			sq.Eq{"fulfilled_at": nil},
+		}).
+		PlaceholderFormat(sq.Dollar)
 }
 
 func (pr *PurchaseRepository) MarkAbandonedNotifiedIfUnset(ctx context.Context, purchaseID int64) (bool, error) {

@@ -57,6 +57,12 @@ func NewPaymentService(
 }
 
 func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int64) error {
+	return s.purchaseRepository.WithFulfillmentLock(ctx, purchaseId, func(lockCtx context.Context) error {
+		return s.processPurchaseByIdLocked(lockCtx, purchaseId)
+	})
+}
+
+func (s PaymentService) processPurchaseByIdLocked(ctx context.Context, purchaseId int64) error {
 	purchase, err := s.purchaseRepository.FindById(ctx, purchaseId)
 	if err != nil {
 		return err
@@ -88,36 +94,42 @@ func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int6
 		return nil
 	}
 
-	var user *remnawave.User
-	if purchase.Status == database.PurchaseStatusPaid && purchase.ExpireAt != nil {
-		user, err = s.remnawaveClient.GetUserByTelegramID(ctx, customer.TelegramID)
+	days := purchase.Month * config.DaysInMonth()
+	targetExpireAt := purchase.ExpireAt
+	if purchase.Status != database.PurchaseStatusPaid || targetExpireAt == nil {
+		expireAt, err := s.remnawaveClient.CalculatePaidExpireAt(ctx, customer.TelegramID, days)
 		if err != nil {
 			return err
 		}
-		user.ExpireAt = *purchase.ExpireAt
-	} else {
-		user, err = s.remnawaveClient.CreateOrUpdateUser(ctx, customer.ID, customer.TelegramID, config.TrafficLimit(), purchase.Month*config.DaysInMonth(), false)
-		if err != nil {
-			return err
-		}
-
-		markedPaid, err := s.purchaseRepository.MarkAsPaid(ctx, purchase.ID, user.ExpireAt)
+		markedPaid, err := s.purchaseRepository.MarkAsPaid(ctx, purchase.ID, expireAt)
 		if err != nil {
 			return err
 		}
 		if !markedPaid {
-			slog.Info("purchase payment state already recorded", "purchase_id", utils.MaskHalfInt64(purchase.ID))
+			updatedPurchase, err := s.purchaseRepository.FindById(ctx, purchase.ID)
+			if err != nil {
+				return err
+			}
+			if updatedPurchase == nil || updatedPurchase.ExpireAt == nil {
+				return fmt.Errorf("purchase %s paid state was not recorded", utils.MaskHalfInt64(purchase.ID))
+			}
+			expireAt = *updatedPurchase.ExpireAt
 		}
+		targetExpireAt = &expireAt
 	}
-	s.trackEvent(ctx, customer, database.EventPaymentSuccess, map[string]interface{}{
-		"purchase_id":  purchase.ID,
-		"month":        purchase.Month,
-		"amount":       purchase.Amount,
-		"currency":     purchase.Currency,
-		"invoice_type": string(purchase.InvoiceType),
-		"stage":        database.LifecycleStagePaid,
-	})
 
+	if targetExpireAt == nil {
+		return fmt.Errorf("purchase %s has no target expiration", utils.MaskHalfInt64(purchase.ID))
+	}
+
+	if purchase.Status == database.PurchaseStatusPaid && purchase.ExpireAt != nil {
+		slog.Info("purchase payment state already recorded", "purchase_id", utils.MaskHalfInt64(purchase.ID))
+	}
+
+	user, err := s.remnawaveClient.CreateOrUpdateUserWithExpireAt(ctx, customer.ID, customer.TelegramID, config.TrafficLimit(), *targetExpireAt, false)
+	if err != nil {
+		return err
+	}
 	customerFilesToUpdate := map[string]interface{}{
 		"subscription_link": user.SubscriptionUrl,
 		"expire_at":         user.ExpireAt,
@@ -133,6 +145,76 @@ func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int6
 		return err
 	}
 
+	ctxReferee := context.Background()
+	referee, err := s.referralRepository.FindByReferee(ctxReferee, customer.TelegramID)
+	if err != nil {
+		return err
+	}
+	if referee != nil && !referee.BonusGranted {
+		bonusClaimed, err := s.referralRepository.MarkBonusGranted(ctxReferee, referee.ID, config.GetReferralDays())
+		if err != nil {
+			return err
+		}
+		if !bonusClaimed {
+			slog.Info("referral bonus already granted", "referral_id", referee.ID)
+		} else {
+			refereeCustomer, err := s.customerRepository.FindByTelegramId(ctxReferee, referee.ReferrerID)
+			if err != nil {
+				return err
+			}
+			refereeUser, err := s.remnawaveClient.CreateOrUpdateUser(ctxReferee, refereeCustomer.ID, refereeCustomer.TelegramID, config.TrafficLimit(), config.GetReferralDays(), false)
+			if err != nil {
+				return err
+			}
+			refereeUserFilesToUpdate := map[string]interface{}{
+				"subscription_link": refereeUser.SubscriptionUrl,
+				"expire_at":         refereeUser.ExpireAt,
+				"lifecycle_stage":   database.LifecycleStagePaid,
+			}
+			err = s.customerRepository.UpdateFields(ctxReferee, refereeCustomer.ID, refereeUserFilesToUpdate)
+			if err != nil {
+				return err
+			}
+			s.createSubscriptionPeriod(ctxReferee, refereeCustomer.ID, nil, database.SubscriptionSourceReferralBonus, 0, refereeUser.ExpireAt, nil, nil, "", map[string]interface{}{
+				"referral_id": referee.ID,
+				"earned_days": config.GetReferralDays(),
+			})
+			slog.Info("Granted referral bonus", "customer_id", utils.MaskHalfInt64(refereeCustomer.ID))
+			_, err = s.telegramBot.SendMessage(ctxReferee, &bot.SendMessageParams{
+				ChatID:    refereeCustomer.TelegramID,
+				ParseMode: models.ParseModeHTML,
+				Text:      fmt.Sprintf(s.translation.GetText(refereeCustomer.Language, "referral_bonus_granted"), config.GetReferralDays()),
+				ReplyMarkup: models.InlineKeyboardMarkup{
+					InlineKeyboard: s.createConnectKeyboard(refereeCustomer),
+				},
+			})
+			if err != nil {
+				slog.Error("Error sending referral bonus message", "error", err, "referral_id", referee.ID)
+			}
+		}
+	}
+
+	s.createSubscriptionPeriod(ctx, customer.ID, &purchase.ID, database.SubscriptionSourcePaid, purchase.Month, user.ExpireAt, &purchase.Amount, &purchase.Currency, string(purchase.InvoiceType), map[string]interface{}{
+		"purchase_id":  purchase.ID,
+		"invoice_type": string(purchase.InvoiceType),
+	})
+	fulfilled, err := s.purchaseRepository.MarkFulfilled(ctx, purchase.ID)
+	if err != nil {
+		return err
+	}
+	if !fulfilled {
+		slog.Info("purchase fulfillment state already recorded", "purchase_id", utils.MaskHalfInt64(purchase.ID))
+	}
+
+	s.trackEvent(ctx, customer, database.EventPaymentSuccess, map[string]interface{}{
+		"purchase_id":  purchase.ID,
+		"month":        purchase.Month,
+		"amount":       purchase.Amount,
+		"currency":     purchase.Currency,
+		"invoice_type": string(purchase.InvoiceType),
+		"stage":        database.LifecycleStagePaid,
+	})
+
 	_, err = s.telegramBot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: customer.TelegramID,
 		Text:   s.translation.GetText(customer.Language, "subscription_activated"),
@@ -141,60 +223,7 @@ func (s PaymentService) ProcessPurchaseById(ctx context.Context, purchaseId int6
 		},
 	})
 	if err != nil {
-		return err
-	}
-
-	ctxReferee := context.Background()
-	referee, err := s.referralRepository.FindByReferee(ctxReferee, customer.TelegramID)
-	if err != nil {
-		return err
-	}
-	if referee != nil && !referee.BonusGranted {
-		refereeCustomer, err := s.customerRepository.FindByTelegramId(ctxReferee, referee.ReferrerID)
-		if err != nil {
-			return err
-		}
-		refereeUser, err := s.remnawaveClient.CreateOrUpdateUser(ctxReferee, refereeCustomer.ID, refereeCustomer.TelegramID, config.TrafficLimit(), config.GetReferralDays(), false)
-		if err != nil {
-			return err
-		}
-		refereeUserFilesToUpdate := map[string]interface{}{
-			"subscription_link": refereeUser.SubscriptionUrl,
-			"expire_at":         refereeUser.ExpireAt,
-			"lifecycle_stage":   database.LifecycleStagePaid,
-		}
-		err = s.customerRepository.UpdateFields(ctxReferee, refereeCustomer.ID, refereeUserFilesToUpdate)
-		if err != nil {
-			return err
-		}
-		err = s.referralRepository.MarkBonusGranted(ctxReferee, referee.ID, config.GetReferralDays())
-		if err != nil {
-			return err
-		}
-		s.createSubscriptionPeriod(ctxReferee, refereeCustomer.ID, nil, database.SubscriptionSourceReferralBonus, 0, refereeUser.ExpireAt, nil, nil, "", map[string]interface{}{
-			"referral_id": referee.ID,
-			"earned_days": config.GetReferralDays(),
-		})
-		slog.Info("Granted referral bonus", "customer_id", utils.MaskHalfInt64(refereeCustomer.ID))
-		_, err = s.telegramBot.SendMessage(ctxReferee, &bot.SendMessageParams{
-			ChatID:    refereeCustomer.TelegramID,
-			ParseMode: models.ParseModeHTML,
-			Text:      fmt.Sprintf(s.translation.GetText(refereeCustomer.Language, "referral_bonus_granted"), config.GetReferralDays()),
-			ReplyMarkup: models.InlineKeyboardMarkup{
-				InlineKeyboard: s.createConnectKeyboard(refereeCustomer),
-			},
-		})
-		if err != nil {
-			return err
-		}
-	}
-
-	s.createSubscriptionPeriod(ctx, customer.ID, &purchase.ID, database.SubscriptionSourcePaid, purchase.Month, user.ExpireAt, &purchase.Amount, &purchase.Currency, string(purchase.InvoiceType), map[string]interface{}{
-		"purchase_id":  purchase.ID,
-		"invoice_type": string(purchase.InvoiceType),
-	})
-	if err := s.purchaseRepository.MarkFulfilled(ctx, purchase.ID); err != nil {
-		return err
+		slog.Error("Error sending subscription activation message", "error", err, "purchase_id", utils.MaskHalfInt64(purchase.ID))
 	}
 
 	slog.Info("purchase processed", "purchase_id", utils.MaskHalfInt64(purchase.ID), "type", purchase.InvoiceType, "customer_id", utils.MaskHalfInt64(customer.ID))
