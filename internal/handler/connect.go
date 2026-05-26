@@ -132,6 +132,8 @@ func buildConnectText(customer *database.Customer, langCode string) string {
 
 			subscriptionActiveText := tm.GetText(langCode, "subscription_active")
 			info.WriteString(fmt.Sprintf(subscriptionActiveText, formattedDate))
+			info.WriteString("\n\n")
+			info.WriteString(tm.GetText(langCode, "connect_hint"))
 
 			if customer.SubscriptionLink != nil && *customer.SubscriptionLink != "" {
 				if config.GetMiniAppURL() == "" && !config.IsWepAppLinkEnabled() {

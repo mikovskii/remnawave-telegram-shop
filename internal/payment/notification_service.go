@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -42,13 +43,14 @@ func (s *NotificationService) DeleteInvoiceMessage(ctx context.Context, purchase
 	}
 }
 
-func (s *NotificationService) SendSubscriptionActivated(ctx context.Context, customer *database.Customer, purchaseID int64) {
+func (s *NotificationService) SendSubscriptionActivated(ctx context.Context, customer *database.Customer, purchaseID int64, expireAt time.Time) {
 	if s.telegramBot == nil || s.translation == nil {
 		return
 	}
+	formattedExpireAt := expireAt.Format("02.01.2006")
 	_, err := s.telegramBot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: customer.TelegramID,
-		Text:   s.translation.GetText(customer.Language, "subscription_activated"),
+		Text:   fmt.Sprintf(s.translation.GetText(customer.Language, "subscription_activated"), formattedExpireAt),
 		ReplyMarkup: models.InlineKeyboardMarkup{
 			InlineKeyboard: s.createConnectKeyboard(customer),
 		},

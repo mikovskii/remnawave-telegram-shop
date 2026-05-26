@@ -11,13 +11,14 @@
   },
   "connect_button": {
     "text": "🔌 Подключиться",
+    "style": "primary",
     "emoji_id": "5843553939672274145"
   },
   "back_button": {
     "text": "⬅️ Назад",
     "emoji_id": "6039539366177541657"
   },
-  "pricing_info": "К оплате принимаются карты российских банков и криптовалюта",
+  "pricing_info": "📅 Выберите срок подписки:",
   "month_1": {
     "text": "📅 1 месяц",
     "emoji_id": "5890937706803894250"
@@ -47,11 +48,11 @@
     "emoji_id": "5258165702707125574"
   },
   "platega_cards_button": {
-    "text": "💳 Карта РФ",
+    "text": "💳 Банковская карта",
     "emoji_id": "5258165702707125574"
   },
   "platega_acquiring_button": {
-    "text": "🏦 Эквайринг",
+    "text": "💳 Банковская карта",
     "emoji_id": "5258165702707125574"
   },
   "platega_worldwide_button": {
@@ -59,17 +60,18 @@
     "emoji_id": "5258165702707125574"
   },
   "platega_crypto_button": {
-    "text": "₿ Криптовалюта (Platega)",
+    "text": "₿ Криптовалюта",
     "emoji_id": "5402186569006210455"
   },
   "pay_button": {
     "text": "✅ Оплатить",
     "emoji_id": "5436386989857320953"
   },
-  "subscription_active": "Ваша подписка действует до: %s",
+  "subscription_active": "✅ Ваш VPN-доступ активен до %s.",
+  "connect_hint": "🔌 Откройте ссылку подписки на устройстве, где хотите использовать VPN.",
   "subscription_link": "\n\nСсылка на подписку: %s",
   "no_subscription": "У вас нет активной подписки",
-  "subscription_activated": "Ваша подписка активирована!",
+  "subscription_activated": "✅ Ваш VPN-доступ активен до %s.",
   "feedback_button": {
     "text": "💬 Отзывы",
     "emoji_id": "5379600444098093058"
@@ -104,6 +106,8 @@
   "invoice_title": "Подписка",
   "invoice_abandoned": "⏳ <b>Оплата не завершена</b>\n\nВы выбрали подписку на %d мес. за %.2f %s, но платеж пока не прошел.\n\nМожно продолжить оплату или выбрать другой способ.",
   "payment_failed": "❌ <b>Платеж не прошел</b>\n\nПодписка на %d мес. за %.2f %s не была оплачена.\n\nПопробуйте оплатить еще раз или выберите другой способ.",
+  "payment_method_select": "📅 Подписка на %s мес. · %s\n💳 Выберите способ оплаты:",
+  "stars_unavailable": "⭐ Telegram Stars доступны после первой оплаты банковской картой, СБП или криптовалютой.",
   "payment_method_cards": "банковские карты",
   "payment_method_sbp": "СБП",
   "payment_method_crypto": "криптовалюта",

@@ -11,13 +11,14 @@
   },
   "connect_button": {
     "text": "🔌 Connect",
+    "style": "primary",
     "emoji_id": "5843553939672274145"
   },
   "back_button": {
     "text": "⬅️ Back",
     "emoji_id": "6039539366177541657"
   },
-  "pricing_info": "Russian bank cards and cryptocurrency are accepted for payment",
+  "pricing_info": "📅 Choose a subscription period:",
   "month_1": {
     "text": "📅 1 month",
     "emoji_id": "5890937706803894250"
@@ -47,29 +48,30 @@
     "emoji_id": "5258165702707125574"
   },
   "platega_cards_button": {
-    "text": "💳 Russian Card",
+    "text": "💳 Bank card",
     "emoji_id": "5258165702707125574"
   },
   "platega_acquiring_button": {
-    "text": "🏦 Acquiring",
+    "text": "💳 Bank card",
     "emoji_id": "5258165702707125574"
   },
   "platega_worldwide_button": {
-    "text": "🌍 International Card",
+    "text": "🌍 International card",
     "emoji_id": "5258165702707125574"
   },
   "platega_crypto_button": {
-    "text": "₿ Crypto (Platega)",
+    "text": "₿ Crypto",
     "emoji_id": "5402186569006210455"
   },
   "pay_button": {
     "text": "✅ Pay",
     "emoji_id": "5436386989857320953"
   },
-  "subscription_active": "Your subscription is valid until: %s",
+  "subscription_active": "✅ Your VPN access is active until %s.",
+  "connect_hint": "🔌 Open the subscription link on the device where you want to use VPN.",
   "subscription_link": "\n\nSubscription link: %s",
   "no_subscription": "You don't have an active subscription",
-  "subscription_activated": "Your subscription has been activated!",
+  "subscription_activated": "✅ Your VPN access is active until %s.",
   "feedback_button": {
     "text": "💬 Feedback",
     "emoji_id": "5379600444098093058"
@@ -104,6 +106,8 @@
   "invoice_title": "Subscription",
   "invoice_abandoned": "⏳ <b>Payment not completed</b>\n\nYou selected a %d-month subscription for %.2f %s, but the payment has not gone through yet.\n\nYou can continue payment or choose another method.",
   "payment_failed": "❌ <b>Payment failed</b>\n\nThe %d-month subscription for %.2f %s was not paid.\n\nTry paying again or choose another method.",
+  "payment_method_select": "📅 %s-month subscription · %s\n💳 Choose payment method:",
+  "stars_unavailable": "⭐ Telegram Stars are available after your first bank card, SBP, or crypto payment.",
   "payment_method_cards": "bank cards",
   "payment_method_sbp": "SBP",
   "payment_method_crypto": "cryptocurrency",

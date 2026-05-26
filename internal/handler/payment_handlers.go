@@ -32,19 +32,19 @@ func (h Handler) BuyCallbackHandler(ctx context.Context, b *bot.Bot, update *mod
 	var priceButtons []models.InlineKeyboardButton
 
 	if config.Price1() > 0 {
-		priceButtons = append(priceButtons, h.translation.GetButton(langCode, "month_1").InlineCallback(fmt.Sprintf("%s?month=%d&amount=%d", CallbackSell, 1, config.Price1())))
+		priceButtons = append(priceButtons, h.planButton(langCode, "month_1", 1, config.Price1()))
 	}
 
 	if config.Price3() > 0 {
-		priceButtons = append(priceButtons, h.translation.GetButton(langCode, "month_3").InlineCallback(fmt.Sprintf("%s?month=%d&amount=%d", CallbackSell, 3, config.Price3())))
+		priceButtons = append(priceButtons, h.planButton(langCode, "month_3", 3, config.Price3()))
 	}
 
 	if config.Price6() > 0 {
-		priceButtons = append(priceButtons, h.translation.GetButton(langCode, "month_6").InlineCallback(fmt.Sprintf("%s?month=%d&amount=%d", CallbackSell, 6, config.Price6())))
+		priceButtons = append(priceButtons, h.planButton(langCode, "month_6", 6, config.Price6()))
 	}
 
 	if config.Price12() > 0 {
-		priceButtons = append(priceButtons, h.translation.GetButton(langCode, "month_12").InlineCallback(fmt.Sprintf("%s?month=%d&amount=%d", CallbackSell, 12, config.Price12())))
+		priceButtons = append(priceButtons, h.planButton(langCode, "month_12", 12, config.Price12()))
 	}
 
 	keyboard := [][]models.InlineKeyboardButton{}
@@ -81,6 +81,7 @@ func (h Handler) SellCallbackHandler(ctx context.Context, b *bot.Bot, update *mo
 	langCode := update.CallbackQuery.From.LanguageCode
 	month := callbackQuery["month"]
 	amount := callbackQuery["amount"]
+	starsUnavailable := false
 	customer, err := h.customerRepository.FindByTelegramId(ctx, callback.Chat.ID)
 	if err != nil {
 		slog.Error("Error finding customer for plan select event", "error", err)
@@ -129,6 +130,7 @@ func (h Handler) SellCallbackHandler(ctx context.Context, b *bot.Bot, update *mo
 		shouldShowStarsButton := true
 
 		if config.RequirePaidPurchaseForStars() {
+			starsUnavailable = true
 			customer, err := h.customerRepository.FindByTelegramId(ctx, callback.Chat.ID)
 			if err != nil {
 				slog.Error("Error finding customer for stars check", "error", err)
@@ -140,6 +142,8 @@ func (h Handler) SellCallbackHandler(ctx context.Context, b *bot.Bot, update *mo
 					shouldShowStarsButton = false
 				} else if paidPurchase == nil {
 					shouldShowStarsButton = false
+				} else {
+					starsUnavailable = false
 				}
 			} else {
 				shouldShowStarsButton = false
@@ -157,17 +161,58 @@ func (h Handler) SellCallbackHandler(ctx context.Context, b *bot.Bot, update *mo
 		h.translation.GetButton(langCode, "back_button").InlineCallback(CallbackBuy),
 	})
 
-	_, err = b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
+	_, err = b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:    callback.Chat.ID,
 		MessageID: callback.ID,
+		ParseMode: models.ParseModeHTML,
 		ReplyMarkup: models.InlineKeyboardMarkup{
 			InlineKeyboard: keyboard,
 		},
+		Text: h.buildPaymentMethodSelectText(langCode, month, amount, starsUnavailable),
 	})
 
 	if err != nil {
 		slog.Error("Error sending sell message", "error", err)
 	}
+}
+
+func (h Handler) planButton(langCode, key string, month int, amount int) models.InlineKeyboardButton {
+	button := h.translation.GetButton(langCode, key)
+	button.Text = fmt.Sprintf("%s · %s", button.Text, h.formatPlanPrice(month, amount))
+	return button.InlineCallback(fmt.Sprintf("%s?month=%d&amount=%d", CallbackSell, month, amount))
+}
+
+func (h Handler) buildPaymentMethodSelectText(langCode, month, amount string, starsUnavailable bool) string {
+	months, err := strconv.Atoi(month)
+	priceText := amount + " RUB"
+	if err == nil {
+		if price, parseErr := strconv.Atoi(amount); parseErr == nil {
+			priceText = h.formatPlanPrice(months, price)
+		}
+	}
+	text := fmt.Sprintf(h.translation.GetText(langCode, "payment_method_select"), month, priceText)
+	if starsUnavailable {
+		text += "\n\n" + h.translation.GetText(langCode, "stars_unavailable")
+	}
+	return text
+}
+
+func (h Handler) formatPlanPrice(month int, rubPrice int) string {
+	if h.hasRubPaymentMethods() {
+		return fmt.Sprintf("%d RUB", rubPrice)
+	}
+	if config.IsTelegramStarsEnabled() {
+		return fmt.Sprintf("%d Stars", config.StarsPrice(month))
+	}
+	return fmt.Sprintf("%d RUB", rubPrice)
+}
+
+func (h Handler) hasRubPaymentMethods() bool {
+	return config.IsPlategaSBPEnabled() ||
+		config.IsPlategaCardsEnabled() ||
+		config.IsPlategaAcquiringEnabled() ||
+		config.IsPlategaWorldwideEnabled() ||
+		config.IsPlategaCryptoEnabled()
 }
 
 func (h Handler) PaymentCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -235,7 +280,7 @@ func (h Handler) PaymentCallbackHandler(ctx context.Context, b *bot.Bot, update 
 			InlineKeyboard: [][]models.InlineKeyboardButton{
 				{
 					h.translation.GetButton(langCode, "pay_button").InlineURL(paymentURL),
-					h.translation.GetButton(langCode, "back_button").InlineCallback(fmt.Sprintf("%s?month=%d&amount=%d", CallbackSell, month, price)),
+					h.translation.GetButton(langCode, "back_button").InlineCallback(fmt.Sprintf("%s?month=%d&amount=%d", CallbackSell, month, config.Price(month))),
 				},
 			},
 		},

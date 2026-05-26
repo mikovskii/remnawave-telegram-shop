@@ -162,7 +162,7 @@ func (s PurchaseService) processPurchaseByIdLocked(ctx context.Context, purchase
 	if result.ReferralBonus != nil {
 		s.notifications.SendReferralBonus(ctx, result.ReferralBonus.Customer, result.ReferralBonus.ReferralID)
 	}
-	s.notifications.SendSubscriptionActivated(ctx, customer, purchase.ID)
+	s.notifications.SendSubscriptionActivated(ctx, customer, purchase.ID, result.User.ExpireAt)
 
 	slog.Info("purchase processed", "purchase_id", utils.MaskHalfInt64(purchase.ID), "type", purchase.InvoiceType, "customer_id", utils.MaskHalfInt64(customer.ID))
 	return nil
